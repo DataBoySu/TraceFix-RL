@@ -99,7 +99,7 @@ Action policy:
 Strict state transition rules (no looping on same action):
 - If pass_count_summary=unknown (no test output yet), MUST run RUN_TESTS next (never VIEW_CODE or REPLACE_LINES).
 - After VIEW_CODE, prefer RUN_TESTS next to get test evidence (never do VIEW_CODE twice in a row).
-- After REPLACE_LINES, always do RUN_TESTS next to validate the fix (never do REPLACE_LINES twice in a row).
+- CRITICAL RULE: After you use REPLACE_LINES, your VERY NEXT action MUST be RUN_TESTS to verify the edit. Do NOT use REPLACE_LINES twice in a row. Do NOT guess whether you made a syntax error; always run tests to get proof.
 - If REPLACE_LINES+RUN_TESTS did not fix the issue, do VIEW_CODE next to re-orient before another edit.
 - Do not attempt the same edit twice; if it fails, change strategy (VIEW_CODE or UNDO_EDIT or RESET_TO_ORIGINAL).
 
@@ -125,16 +125,6 @@ Observation: output explicitly shows Tests Passed: 3/3 and includes the success 
 Valid action JSON:
 {"thought":"Observation: ... Diagnosis: ... Plan: ...","action_type":"SUBMIT","start_line":null,"end_line":null,"new_code_block":null}
 
-Example 3: tests ran but syntax error present -> choose REPLACE_LINES (or UNDO_EDIT)
-Input evidence snippet:
-- syntax_error=true
-- pass_count_summary=Tests Passed: 0/3
-- traceback includes SyntaxError with a file line reference.
-Valid thought:
-Observation: syntax_error=true and traceback provides a concrete syntax failure location. Diagnosis: code is syntactically invalid, so functional debugging is blocked until syntax is repaired. Plan: apply REPLACE_LINES at the indicated lines (or UNDO_EDIT if the latest edit caused this), then RUN_TESTS.
-Valid action JSON:
-{"thought":"Observation: ... Diagnosis: ... Plan: ...","action_type":"REPLACE_LINES","start_line":8,"end_line":9,"new_code_block":"    # syntax-fixed code"}
-
 Example 4: NO TEST OUTPUT YET + UNKNOWN PASS COUNT -> MUST choose RUN_TESTS (not VIEW_CODE)
 Input evidence snippet:
 - pass_count_summary=unknown
@@ -145,18 +135,6 @@ Observation: no test execution has occurred; pass_count_summary is unknown and n
 Valid action JSON (WRONG - violates state rule):
 BAD: {"thought":"...","action_type":"VIEW_CODE","start_line":null,"end_line":null,"new_code_block":null}
 CORRECT: {"thought":"...","action_type":"RUN_TESTS","start_line":null,"end_line":null,"new_code_block":null}
-
-Example 5: EDIT FAILED - SAME ACTION TWICE IS WRONG
-Previous step: REPLACE_LINES on line 4 (indentation fix attempt 1)
-Current observation:
-- syntax_error=true (indentation still wrong)
-- same error message about dedentation
-- pass_count_summary=unknown
-Valid thought:
-Observation: same indentation error persists despite the previous REPLACE_LINES attempt. The fix did not work. Diagnosis: attempting the identical REPLACE_LINES again will create an infinite loop; must change strategy. Plan: call VIEW_CODE next to re-examine the context and understand why the fix didn't apply properly, then revise the approach.
-Valid action JSON (WRONG - causes looping):
-BAD (same edit): {"thought":"...","action_type":"REPLACE_LINES","start_line":4,"end_line":4,"new_code_block":"        fixed code"}
-CORRECT (change strategy): {"thought":"...","action_type":"VIEW_CODE","start_line":null,"end_line":null,"new_code_block":null}
 
 Submit gate (hard rule):
 - If any failure, error, traceback, xfailed/unfinished signal, or uncertainty remains, do not SUBMIT.
