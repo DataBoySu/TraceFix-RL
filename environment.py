@@ -139,6 +139,7 @@ class TraceFixRLGym:
         self._prev_pass_count: int = 0
         self._last_test_results: List[TestResult] = []
         self._last_output: str = ""
+        self._last_execution_output: str = ""
         self._last_edited_line: Optional[int] = None
         self._episode_id: str = ""
         self._done: bool = False
@@ -209,6 +210,7 @@ class TraceFixRLGym:
         self._prev_pass_count  = 0
         self._last_test_results = []
         self._last_output      = ""
+        self._last_execution_output = ""
         self._last_edited_line = None   # no edits yet — localized_context will be empty
         self._episode_id       = str(uuid.uuid4())[:8]
         self._done             = False
@@ -347,7 +349,7 @@ class TraceFixRLGym:
             self._last_run_all_passed = (current_pass == total_tests)
 
         if current_pass == total_tests and not syntax_err:
-            self._last_output = (
+            self._last_execution_output = (
                 f"Tests Passed: {total_tests}/{total_tests}.\n\n"
                 "SUCCESS: ALL TESTS PASSED! You are finished. You MUST now use the SUBMIT action."
             )
@@ -359,10 +361,11 @@ class TraceFixRLGym:
             error_traceback = (output or "").strip() or "\n\n".join(failing_messages).strip()
             if not error_traceback:
                 error_traceback = "No traceback available."
-            self._last_output = (
+            self._last_execution_output = (
                 f"Tests Passed: {current_pass}/{total_tests}.\n\n"
                 f"Traceback:\n{error_traceback}"
             )
+        self._last_output = self._last_execution_output
 
         return reward
 
@@ -507,7 +510,7 @@ class TraceFixRLGym:
 
         context_anchor = self._last_edited_line
         if self._last_action == "RUN_TESTS" and not self._last_run_all_passed:
-            extracted_line = extract_error_line(self._last_output)
+            extracted_line = extract_error_line(self._last_execution_output)
             if extracted_line is not None:
                 context_anchor = extracted_line
 
@@ -518,7 +521,11 @@ class TraceFixRLGym:
                 idx + 1: line for idx, line in enumerate(self._code_lines)
             },
             localized_context     = localized,
-            last_execution_output = self._last_output,
+            last_execution_output = (
+                self._last_execution_output
+                if self._last_action == "RUN_TESTS"
+                else self._last_output
+            ),
             syntax_error          = not syntax_valid,
             test_results          = list(self._last_test_results),
             step_count            = self._step_count,
