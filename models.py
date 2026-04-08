@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 
 from openenv.core.env_server.types import Action, Observation
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 ActionType = Literal[
@@ -29,9 +29,26 @@ class CodeAction(Action):
         ...,
         description="One of VIEW_CODE, RUN_TESTS, REPLACE_LINES, UNDO_EDIT, RESET_TO_ORIGINAL, SUBMIT.",
     )
-    start_line: Optional[int] = Field(default=None, ge=1)
-    end_line: Optional[int] = Field(default=None, ge=1)
+    start_line: Optional[int] = Field(default=None)
+    end_line: Optional[int] = Field(default=None)
     new_code_block: Optional[str] = Field(default=None)
+
+    @field_validator("start_line", "end_line", mode="before")
+    @classmethod
+    def _coerce_optional_int(cls, value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            raw = value.strip()
+            if raw == "":
+                return None
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+        if isinstance(value, int):
+            return value
+        return None
 
     @model_validator(mode="after")
     def validate_replace_fields(self) -> "CodeAction":
@@ -42,6 +59,15 @@ class CodeAction(Action):
                 raise ValueError("REPLACE_LINES requires end_line.")
             if self.new_code_block is None:
                 raise ValueError("REPLACE_LINES requires new_code_block.")
+            if self.start_line < 1 or self.end_line < 1:
+                raise ValueError("REPLACE_LINES requires start_line and end_line >= 1.")
+            if self.start_line > self.end_line:
+                raise ValueError("REPLACE_LINES requires start_line <= end_line.")
+        else:
+            # Ignore extra form fields for non-edit actions (web UI often sends defaults).
+            self.start_line = None
+            self.end_line = None
+            self.new_code_block = None
         return self
 
 
