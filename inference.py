@@ -96,13 +96,6 @@ Action policy:
 - After RUN_TESTS, do not choose RUN_TESTS again immediately unless test evidence is genuinely missing.
 - Treat "no output" as invalid reasoning when pass_count_summary or traceback text is present.
 
-Strict state transition rules (no looping on same action):
-- If pass_count_summary=unknown (no test output yet), MUST run RUN_TESTS next (never VIEW_CODE or REPLACE_LINES).
-- After VIEW_CODE, prefer RUN_TESTS next to get test evidence (never do VIEW_CODE twice in a row).
-- CRITICAL RULE: After you use REPLACE_LINES, your VERY NEXT action MUST be RUN_TESTS to verify the edit. Do NOT use REPLACE_LINES twice in a row. Do NOT guess whether you made a syntax error; always run tests to get proof.
-- If REPLACE_LINES+RUN_TESTS did not fix the issue, do VIEW_CODE next to re-orient before another edit.
-- Do not attempt the same edit twice; if it fails, change strategy (VIEW_CODE or UNDO_EDIT or RESET_TO_ORIGINAL).
-
 Worked examples (generic, no benchmark task leakage):
 
 Example 1: failing tests after RUN_TESTS -> choose REPLACE_LINES
@@ -124,17 +117,6 @@ Valid thought:
 Observation: output explicitly shows Tests Passed: 3/3 and includes the success marker. Diagnosis: there is no remaining failing evidence and additional RUN_TESTS is unnecessary. Plan: choose SUBMIT now to end the episode.
 Valid action JSON:
 {"thought":"Observation: ... Diagnosis: ... Plan: ...","action_type":"SUBMIT","start_line":null,"end_line":null,"new_code_block":null}
-
-Example 4: NO TEST OUTPUT YET + UNKNOWN PASS COUNT -> MUST choose RUN_TESTS (not VIEW_CODE)
-Input evidence snippet:
-- pass_count_summary=unknown
-- all_tests_pass_signal=false
-- last_execution_output is empty ""
-Valid thought:
-Observation: no test execution has occurred; pass_count_summary is unknown and no test output is available. Diagnosis: cannot diagnose code bugs without seeing test failures; must run tests first. Plan: choose RUN_TESTS to collect test evidence and determine what needs fixing.
-Valid action JSON (WRONG - violates state rule):
-BAD: {"thought":"...","action_type":"VIEW_CODE","start_line":null,"end_line":null,"new_code_block":null}
-CORRECT: {"thought":"...","action_type":"RUN_TESTS","start_line":null,"end_line":null,"new_code_block":null}
 
 Submit gate (hard rule):
 - If any failure, error, traceback, xfailed/unfinished signal, or uncertainty remains, do not SUBMIT.
@@ -368,6 +350,18 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                 obs_last_output = str(getattr(result.observation, "last_execution_output", "") or "")
                 pass_count_text, all_tests_pass_signal = _extract_pass_signal_fields(obs_last_output)
                 last_action = action_trajectory[-1] if action_trajectory else "none"
+                dynamic_override = ""
+                if action_trajectory and action_trajectory[-1] == "REPLACE_LINES":
+                    dynamic_override = (
+                        "\n[SYSTEM OVERRIDE]: Your last action was REPLACE_LINES. "
+                        "You are STRICTLY FORBIDDEN from editing the code again. "
+                        "Your action_type MUST be RUN_TESTS to verify the changes.\n"
+                    )
+                elif action_trajectory and action_trajectory[-1] == "VIEW_CODE":
+                    dynamic_override = (
+                        "\n[SYSTEM OVERRIDE]: Your last action was VIEW_CODE. "
+                        "You MUST choose RUN_TESTS next to get test evidence.\n"
+                    )
                 if show_thought:
                     output_preview = "\\n".join(obs_last_output.splitlines()[:6])
                     print("[OBS_DEBUG]", file=sys.stderr, flush=True)
@@ -386,8 +380,9 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                             "If all_tests_pass_signal=true, you must choose SUBMIT now and must not choose RUN_TESTS again. "
                             "Do not wait for additional test output when all_tests_pass_signal=true. "
                             "If last_action was RUN_TESTS and all_tests_pass_signal=false, choose REPLACE_LINES or VIEW_CODE next, not RUN_TESTS again.\n\n"
+                            f"action_trajectory={(' -> '.join(action_trajectory) if action_trajectory else 'none')}\n"
+                            f"{dynamic_override}\n"
                             f"decision_guard: last_action={last_action}, pass_count_summary={pass_count_text}, all_tests_pass_signal={str(all_tests_pass_signal).lower()}\n\n"
-                            f"action_trajectory={(' -> '.join(action_trajectory) if action_trajectory else 'none')}\n\n"
                             f"{obs_text}"
                         ),
                     }
