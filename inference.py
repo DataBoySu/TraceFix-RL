@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from openai import OpenAI
+from pydantic import ValidationError
 
 try:
     from tracefix_rl import CodeAction, TraceFixRLEnv
@@ -36,7 +37,7 @@ except Exception:
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:1234/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "nvidia/nemotron-3-nano-4b")
+MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or "lm-studio"
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
@@ -47,26 +48,52 @@ MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99"))
 
 SYSTEM_PROMPT = """\
-You are a debugging policy agent. Output exactly one CodeAction JSON object per turn.
+You are a deterministic debugging policy agent.
+You must output exactly one valid CodeAction JSON object per turn and nothing else.
 
-Use Action Trajectory on every turn. If an action repeats without progress, change strategy.
-PARSE_ERROR means your previous output was invalid; fix formatting immediately.
+Primary failures to avoid:
+1) Invalid JSON or wrong field types.
+2) Misreading last_execution_output and submitting before tests are truly passing.
 
-Mandatory thought format (exactly 3 sentences):
-Observation: what you see in localized_context or last_execution_output.
-Diagnosis: root cause and exact line(s) to change.
-Plan: the next action_type and why.
+Output contract (strict):
+- Return a single JSON object, not an array.
+- Allowed keys only: thought, action_type, start_line, end_line, new_code_block.
+- No markdown, no code fences, no commentary outside JSON, no extra keys.
+- thought must be a plain string.
+- action_type must be one of: VIEW_CODE, RUN_TESTS, REPLACE_LINES, UNDO_EDIT, RESET_TO_ORIGINAL, SUBMIT.
+- start_line and end_line must be integer or null.
+- new_code_block must be string or null.
+- If action_type is not REPLACE_LINES, set start_line=null, end_line=null, new_code_block=null.
+- If action_type is REPLACE_LINES, set start_line and end_line to exact integer keys from code_dict and provide new_code_block as replacement code only.
+
+Mandatory thought format:
+Observation: summarize concrete evidence from localized_context and/or last_execution_output.
+Diagnosis: identify the most likely root cause and exact line numbers to edit when applicable.
+Plan: choose the next action_type and justify it briefly.
+
+How to read last_execution_output correctly:
+- Prefer traceback and assertion text over assumptions.
+- Extract failing test name, exception type, file path, and line number when present.
+- If output is truncated or ambiguous, run RUN_TESTS before editing.
+- Treat syntax errors as highest priority and fix them before semantic issues.
+- Never claim success unless output clearly indicates complete pass status.
 
 Action policy:
-- VIEW_CODE to inspect full line mapping.
-- RUN_TESTS to get fresh traceback evidence.
-- REPLACE_LINES for focused fixes using exact code_dict keys.
-- UNDO_EDIT if the latest edit made things worse.
-- RESET_TO_ORIGINAL as last-resort recovery.
-- SUBMIT ONLY when last_execution_output explicitly contains the success signal that all tests passed.
+- VIEW_CODE when line mapping or surrounding context is insufficient.
+- RUN_TESTS to collect fresh evidence after edits or when uncertain.
+- REPLACE_LINES for minimal, line-accurate fixes tied to observed failures.
+- UNDO_EDIT if latest change worsened results or introduced new failures.
+- RESET_TO_ORIGINAL only as last-resort recovery.
+- SUBMIT only when last_execution_output explicitly and unambiguously indicates all tests passed.
 
-Return only JSON keys: thought, action_type, start_line, end_line, new_code_block.
-No markdown. No extra keys.
+Submit gate (hard rule):
+- If any failure, error, traceback, xfailed/unfinished signal, or uncertainty remains, do not SUBMIT.
+
+Self-check before finalizing response:
+- Is this valid JSON?
+- Are all values schema-valid primitive types?
+- Are nulls set correctly for non-REPLACE_LINES actions?
+- Does the thought have exactly 3 sentences in the required Observation/Diagnosis/Plan structure?
 """
 
 
@@ -88,46 +115,15 @@ def _decode_action_json(raw_text: str) -> dict[str, Any]:
     return json.loads(stripped)
 
 
-def _coerce_legacy_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    """
-    Normalize common legacy output shapes into strict CodeAction fields.
-
-    This keeps runtime resilient across weaker model backends while still
-    validating the final payload with strict Pydantic rules.
-    """
-    normalized = dict(payload)
-
-    if "action_type" not in normalized and isinstance(normalized.get("type"), str):
-        normalized["action_type"] = normalized["type"]
-
-    if "thought" not in normalized or normalized.get("thought") in (None, ""):
-        normalized["thought"] = (
-            "Recovered malformed action payload and mapped legacy fields "
-            "to strict CodeAction schema."
-        )
-
-    if "lines" in normalized and isinstance(normalized["lines"], list):
-        line_items = []
-        for item in normalized["lines"]:
-            if not isinstance(item, dict):
-                continue
-            line_no = item.get("line")
-            code_text = item.get("code")
-            if isinstance(line_no, int) and isinstance(code_text, str):
-                line_items.append((line_no, code_text))
-        if line_items:
-            line_items.sort(key=lambda x: x[0])
-            if "start_line" not in normalized:
-                normalized["start_line"] = line_items[0][0]
-            if "end_line" not in normalized:
-                normalized["end_line"] = line_items[-1][0]
-            if "new_code_block" not in normalized:
-                normalized["new_code_block"] = "\n".join(code for _, code in line_items)
-
-    normalized.pop("type", None)
-    normalized.pop("lines", None)
-    normalized.pop("source", None)
-    return normalized
+def _clean_validation_error(exc: ValidationError) -> str:
+    """Return a concise, user-facing schema violation summary."""
+    first_error = exc.errors()[0] if exc.errors() else {}
+    loc = first_error.get("loc", ["Unknown"])
+    field_name = loc[0] if isinstance(loc, (list, tuple)) and loc else "Unknown"
+    return (
+        f"JSON Schema Violation on field '{field_name}': Must be a flat string/integer. "
+        "Do not use nested objects or arrays."
+    )
 
 
 def log_start(task: str, env: str, model: str) -> None:
@@ -199,7 +195,12 @@ def _get_model_action(
                 raw_response=raw_response,
             )
 
-        action = CodeAction.model_validate(parsed)
+        try:
+            action = CodeAction.model_validate(parsed)
+        except ValidationError as exc:
+            content = getattr(message, "content", "")
+            raw_response = content if isinstance(content, str) else json.dumps(content, ensure_ascii=True, default=str)
+            raise ModelParseError(_clean_validation_error(exc), raw_response=raw_response) from exc
         assistant_json = action.model_dump_json(exclude_none=False)
         return action, assistant_json
     except Exception as parse_exc:
@@ -212,10 +213,14 @@ def _get_model_action(
             )
             raw_text = (completion.choices[0].message.content or "").strip()
             parsed_dict = _decode_action_json(raw_text)
-            parsed_dict = _coerce_legacy_action_payload(parsed_dict)
-            action = CodeAction.model_validate(parsed_dict)
+            try:
+                action = CodeAction.model_validate(parsed_dict)
+            except ValidationError as exc:
+                raise ModelParseError(_clean_validation_error(exc), raw_response=raw_text) from exc
             assistant_json = action.model_dump_json(exclude_none=False)
             return action, assistant_json
+        except ModelParseError:
+            raise
         except Exception as fallback_exc:
             raise ModelParseError(
                 (
@@ -257,6 +262,7 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
     kill_switch_triggered = False
     last_action_type: Optional[str] = None
     consecutive_same_action_count = 0
+    consecutive_parse_error_count = 0
 
     try:
         if LOCAL_IMAGE_NAME:
@@ -293,7 +299,8 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                     {
                         "role": "user",
                         "content": (
-                            "Pick the single best next action and return only a CodeAction JSON object.\n\n"
+                            "Pick the single best next action and return only one valid CodeAction JSON object. "
+                            "Use localized_context/last_execution_output as evidence, and do not SUBMIT unless all tests explicitly pass.\n\n"
                             f"action_trajectory={(' -> '.join(action_trajectory) if action_trajectory else 'none')}\n\n"
                             f"{obs_text}"
                         ),
@@ -301,12 +308,14 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                 )
                 try:
                     action, assistant_json = _get_model_action(client, history_messages)
+                    consecutive_parse_error_count = 0
                     history_messages.append({"role": "assistant", "content": assistant_json})
                     if show_thought:
                         _print_thought(action, assistant_json)
                 except ModelParseError as exc:
                     cause = str(exc).replace("\n", " ")
                     parse_error_note = cause
+                    consecutive_parse_error_count += 1
                     raw_response = (exc.raw_response or "").strip()
                     if raw_response:
                         history_messages.append({"role": "assistant", "content": raw_response})
@@ -321,6 +330,16 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                         }
                     )
                     history.append(f"PARSE_ERROR: {cause}")
+                    if consecutive_parse_error_count >= 3:
+                        kill_switch_triggered = True
+                        history.append(
+                            "KILL_SWITCH: PARSE_ERROR occurred 3 times consecutively. "
+                            "Terminating episode early to prevent token burn."
+                        )
+                        steps_taken = step
+                        success = False
+                        score = 0.0
+                        break
                     action = CodeAction(
                         action_type="RUN_TESTS",
                         thought=(
@@ -328,6 +347,9 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                             "collect fresh traceback context for the next valid action."
                         ),
                     )
+
+            if kill_switch_triggered:
+                break
 
             current_action_type = action.action_type
             if current_action_type == last_action_type:
