@@ -22,8 +22,12 @@ class TraceFixRLEnv(
 
     def _parse_result(self, payload: Dict) -> StepResult[CodeObservation]:
         obs_data = payload.get("observation", {})
+        raw_code_dict = obs_data.get("code_dict", {})
+        code_dict = {
+            int(k): v for k, v in raw_code_dict.items()
+        } if isinstance(raw_code_dict, dict) else {}
         observation = CodeObservation(
-            code_lines=obs_data.get("code_lines", []),
+            code_dict=code_dict,
             localized_context=obs_data.get("localized_context", ""),
             last_execution_output=obs_data.get("last_execution_output", ""),
             syntax_error=obs_data.get("syntax_error", False),
