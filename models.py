@@ -95,7 +95,7 @@ class TestResult(BaseModel):
 class CodeObservation(Observation):
     """Full observation returned after each step."""
 
-    code_lines: List[str] = Field(default_factory=list)
+    code_dict: Dict[int, str] = Field(default_factory=dict)
     localized_context: str = Field(default="")
     last_execution_output: str = Field(default="")
     syntax_error: bool = Field(default=False)
@@ -107,8 +107,9 @@ class CodeObservation(Observation):
 
     def render_code(self) -> str:
         """Render source with 1-indexed line numbers for prompts."""
-        if not self.code_lines:
+        if not self.code_dict:
             return "<empty>"
         return "\n".join(
-            f"{idx + 1:>3} | {line}" for idx, line in enumerate(self.code_lines)
+            f"{line_num:>3} | {self.code_dict[line_num]}"
+            for line_num in sorted(self.code_dict.keys())
         )

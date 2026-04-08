@@ -134,7 +134,15 @@ def _extract_json(text: str) -> dict[str, Any]:
 
 
 def _build_observation_text(observation: Any) -> str:
-    code_preview = "\n".join(observation.code_lines[:30]) if observation.code_lines else ""
+    code_dict = getattr(observation, "code_dict", {}) or {}
+    sorted_items = sorted(
+        ((int(line_num), text) for line_num, text in code_dict.items()),
+        key=lambda x: x[0],
+    )
+    code_preview = "\n".join(
+        f"{line_num} | {text}"
+        for line_num, text in sorted_items[:30]
+    )
     return (
         f"step_count={observation.step_count}\n"
         f"steps_remaining={observation.steps_remaining}\n"

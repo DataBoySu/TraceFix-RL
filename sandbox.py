@@ -32,11 +32,12 @@ import ast
 import io
 import inspect
 import multiprocessing
+import importlib
 import signal
 import sys
 import textwrap
 import traceback
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 try:
     from .models import TestResult
@@ -62,7 +63,20 @@ def _make_safe_stub(name: str) -> Callable:
     return _stub
 
 
-_SAFE_BUILTINS: Dict[str, Any] = {
+TEST_SUITE_ALLOWED_MODULES: Set[str] = {
+    "bisect",
+    "collections",
+    "functools",
+    "heapq",
+    "itertools",
+    "math",
+    "re",
+    "string",
+    "typing",
+}
+
+
+SAFE_BUILTINS: Dict[str, Any] = {
     "int": int, "float": float, "str": str, "bool": bool,
     "list": list, "dict": dict, "set": set, "tuple": tuple,
     "bytes": bytes, "bytearray": bytearray, "frozenset": frozenset,
@@ -102,6 +116,102 @@ _SAFE_BUILTINS: Dict[str, Any] = {
     "__loader__":  None,
     "__spec__":    None,
 }
+
+
+def _sanitize_imports_and_prepare_bindings(
+    source: str,
+    allowed_modules: Set[str],
+) -> Tuple[str, List[Tuple[str, str, str]], List[Tuple[str, str]]]:
+    """
+    Parse source, validate imports against allowlist, and strip import statements.
+
+    Returns
+    -------
+    sanitized_source:
+      Source with all import statements removed (so code never calls __import__).
+    module_alias_bindings:
+      List[(local_name, module_name, attribute_name)].
+      `attribute_name == ""` means bind module object itself.
+    modules_to_preload:
+      List[(root_name, import_target)] pairs.
+    """
+    tree = ast.parse(source)
+    blocked_lines: Set[int] = set()
+    module_alias_bindings: List[Tuple[str, str, str]] = []
+    modules_to_preload: Set[Tuple[str, str]] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_name = alias.name
+                root_name = module_name.split(".")[0]
+                if root_name not in allowed_modules:
+                    raise ImportError(
+                        f"Import of '{root_name}' is not allowed in this sandbox."
+                    )
+                local_name = alias.asname or root_name
+                module_alias_bindings.append((local_name, module_name, ""))
+                modules_to_preload.add((root_name, module_name))
+            if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
+                blocked_lines.update(range(node.lineno, node.end_lineno + 1))
+
+        if isinstance(node, ast.ImportFrom):
+            if node.level != 0 or not node.module:
+                raise ImportError(
+                    "Relative imports are not allowed in this sandbox."
+                )
+            module_name = node.module
+            root_name = module_name.split(".")[0]
+            if root_name not in allowed_modules:
+                raise ImportError(
+                    f"Import of '{root_name}' is not allowed in this sandbox."
+                )
+            for alias in node.names:
+                if alias.name == "*":
+                    raise ImportError(
+                        "Wildcard imports are not allowed in this sandbox."
+                    )
+                local_name = alias.asname or alias.name
+                module_alias_bindings.append((local_name, module_name, alias.name))
+            modules_to_preload.add((root_name, module_name))
+            if hasattr(node, "lineno") and hasattr(node, "end_lineno"):
+                blocked_lines.update(range(node.lineno, node.end_lineno + 1))
+
+    sanitized_lines = [
+        line
+        for i, line in enumerate(source.splitlines(), start=1)
+        if i not in blocked_lines
+    ]
+    return "\n".join(sanitized_lines), module_alias_bindings, sorted(modules_to_preload)
+
+
+def _build_local_env_for_source(
+    source: str,
+    allowed_modules: Set[str],
+) -> Tuple[str, Dict[str, Any]]:
+    """
+    Build a local env with preloaded authorized modules/symbols.
+    """
+    sanitized_source, bindings, modules_to_preload = _sanitize_imports_and_prepare_bindings(
+        source, allowed_modules
+    )
+    local_env: Dict[str, Any] = {}
+    loaded_modules: Dict[str, Any] = {}
+
+    for root_name, import_target in modules_to_preload:
+        if import_target not in loaded_modules:
+            loaded_modules[import_target] = importlib.import_module(import_target)
+        if root_name not in loaded_modules:
+            loaded_modules[root_name] = importlib.import_module(root_name)
+
+    for local_name, module_name, attribute_name in bindings:
+        module_obj = loaded_modules[module_name]
+        if attribute_name:
+            local_env[local_name] = getattr(module_obj, attribute_name)
+        else:
+            local_env[local_name] = module_obj
+
+    return sanitized_source, local_env
 
 
 
@@ -150,9 +260,15 @@ def _worker(
             result_queue.put((_tail_truncate(err), [], True))
             return
 
-        namespace: Dict[str, Any] = {"__builtins__": __builtins__}
         try:
-            exec(code_obj, namespace)  # noqa: S102
+            sanitized_source, local_env = _build_local_env_for_source(
+                source,
+                TEST_SUITE_ALLOWED_MODULES,
+            )
+            exec_env: Dict[str, Any] = {"__builtins__": SAFE_BUILTINS}
+            exec_env.update(local_env)
+            code_obj = compile(sanitized_source, "<agent_code>", "exec")
+            exec(code_obj, exec_env, exec_env)  # noqa: S102
         except Exception:  # noqa: BLE001
             tb = traceback.format_exc()
             sys.stdout, sys.stderr = old_stdout, old_stderr
@@ -162,15 +278,24 @@ def _worker(
         for test_src in test_sources:
             fn_name = "<unknown>"
             try:
-                exec(test_src, namespace)  # noqa: S102
+                sanitized_test_src, test_env_injections = _build_local_env_for_source(
+                    test_src,
+                    TEST_SUITE_ALLOWED_MODULES,
+                )
+                exec_env.update(test_env_injections)
+                exec(
+                    compile(sanitized_test_src, "<sandbox_test>", "exec"),
+                    exec_env,
+                    exec_env,
+                )  # noqa: S102
 
                 fn_name = [
                     ln.split("(")[0].replace("def ", "").strip()
-                    for ln in test_src.splitlines()
+                    for ln in sanitized_test_src.splitlines()
                     if ln.startswith("def ")
                 ][-1]
 
-                namespace[fn_name](namespace)
+                exec_env[fn_name](exec_env)
                 test_results.append({"test_name": fn_name, "passed": True})
 
             except AssertionError as exc:

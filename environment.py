@@ -7,12 +7,12 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from .context import get_localized_context
+    from .context import extract_error_line, get_localized_context
     from .models import CodeAction, CodeObservation, TestResult
     from .sandbox import check_syntax, run_code_with_tests
     from .tasks import ALL_TASKS, TASKS_BY_DIFFICULTY
 except ImportError:
-    from context import get_localized_context
+    from context import extract_error_line, get_localized_context
     from models import CodeAction, CodeObservation, TestResult
     from sandbox import check_syntax, run_code_with_tests
     from tasks import ALL_TASKS, TASKS_BY_DIFFICULTY
@@ -147,6 +147,7 @@ class TraceFixRLGym:
         self._original_code: List[str] = []
         self._edit_history: List[List[str]] = []
         self.training_step: int = 0
+        self._last_run_all_passed: bool = False
 
 
     def _sample_task(self, task_override=None) -> Dict[str, Any]:
@@ -217,6 +218,7 @@ class TraceFixRLGym:
         self._edit_history  = []
         self._last_action: Optional[str] = None
         self._consecutive_count: int = 0
+        self._last_run_all_passed = False
 
         obs = self._build_observation(reward=0.0)
 
@@ -336,11 +338,13 @@ class TraceFixRLGym:
 
         if syntax_err:
             reward += R_SYNTAX_ERROR
+            self._last_run_all_passed = False
         else:
             current_pass = sum(1 for t in results if t.passed)
             new_passes   = max(0, current_pass - self._prev_pass_count)
             reward       += new_passes * R_PER_NEW_PASS
             self._prev_pass_count = current_pass
+            self._last_run_all_passed = all(t.passed for t in results)
 
         return reward
 
@@ -483,10 +487,18 @@ class TraceFixRLGym:
     def _build_observation(self, reward: float) -> CodeObservation:
         syntax_valid, _ = check_syntax(self._source())
 
-        localized = get_localized_context(self._code_lines, self._last_edited_line)
+        context_anchor = self._last_edited_line
+        if self._last_action == "RUN_TESTS" and not self._last_run_all_passed:
+            extracted_line = extract_error_line(self._last_output)
+            if extracted_line is not None:
+                context_anchor = extracted_line
+
+        localized = get_localized_context(self._code_lines, context_anchor)
 
         return CodeObservation(
-            code_lines            = list(self._code_lines),
+            code_dict             = {
+                idx + 1: line for idx, line in enumerate(self._code_lines)
+            },
             localized_context     = localized,
             last_execution_output = self._last_output,
             syntax_error          = not syntax_valid,

@@ -2,11 +2,43 @@
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional
 
 WINDOW_LINES: int = 10
 
 MAX_CONTEXT_CHARS: int = 2_000
+
+
+_TRACEBACK_FILE_LINE_RE = re.compile(r'File "([^"]+)", line (\d+)')
+_SYNTAX_LINE_RE = re.compile(r"SyntaxError at line (\d+)")
+
+
+def extract_error_line(traceback_str: str) -> Optional[int]:
+    """
+    Extract the most relevant crashing line number from sandbox output.
+
+    Preference order:
+    1) Last frame pointing to agent code pseudo-files (<agent_code>, <string>).
+    2) Last traceback frame line number.
+    3) "SyntaxError at line N" fallback.
+    """
+    if not traceback_str:
+        return None
+
+    matches = _TRACEBACK_FILE_LINE_RE.findall(traceback_str)
+    if matches:
+        preferred_files = {"<agent_code>", "<string>"}
+        for file_name, line_str in reversed(matches):
+            if file_name in preferred_files:
+                return int(line_str)
+        return int(matches[-1][1])
+
+    syntax_match = _SYNTAX_LINE_RE.search(traceback_str)
+    if syntax_match:
+        return int(syntax_match.group(1))
+
+    return None
 
 
 def get_localized_context(
