@@ -35,9 +35,9 @@ from openai import OpenAI
 # ---------------------------------------------------------------------------
 
 API_BASE_URL: str = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME:   str = os.getenv("MODEL_NAME",   "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-NVFP4")
+MODEL_NAME:   str = os.getenv("MODEL_NAME",   "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8")
 HF_TOKEN:     str = os.getenv("HF_TOKEN",     "")
-ENV_WS_URL:   str = os.getenv("ENV_WS_URL",   "ws://localhost:8000/ws")
+ENV_WS_URL:   str = os.getenv("ENV_WS_URL",   "ws://localhost:7860/ws")
 
 # ---------------------------------------------------------------------------
 # OpenAI client
