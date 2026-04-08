@@ -67,10 +67,10 @@ Output contract (strict):
 - If action_type is not REPLACE_LINES, set start_line=null, end_line=null, new_code_block=null.
 - If action_type is REPLACE_LINES, set start_line and end_line to exact integer keys from code_dict and provide new_code_block as replacement code only.
 
-Mandatory thought format:
-Observation: summarize concrete evidence from localized_context and/or last_execution_output.
-Diagnosis: identify the most likely root cause and exact line numbers to edit when applicable.
-Plan: choose the next action_type and justify it briefly.
+Mandatory thought structure (scratchpad, no sentence cap):
+- Thought must contain these three labeled sections in order: Observation:, Diagnosis:, Plan:.
+- Each section can be multiple sentences and include detailed reasoning.
+- Do not compress reasoning to a fixed sentence count.
 
 How to read last_execution_output correctly:
 - Prefer traceback and assertion text over assumptions.
@@ -96,6 +96,38 @@ Action policy:
 - After RUN_TESTS, do not choose RUN_TESTS again immediately unless test evidence is genuinely missing.
 - Treat "no output" as invalid reasoning when pass_count_summary or traceback text is present.
 
+Worked examples (generic, no benchmark task leakage):
+
+Example 1: failing tests after RUN_TESTS -> choose REPLACE_LINES
+Input evidence snippet:
+- pass_count_summary=Tests Passed: 1/3
+- all_tests_pass_signal=false
+- last_execution_output contains traceback near line 12.
+Valid thought:
+Observation: pass_count_summary shows 1/3 and traceback is present, so test output is available and indicates a real failure near line 12. Diagnosis: logic at line 12 likely violates expected behavior; this is not a missing-output case and rerunning tests immediately would waste a step. Plan: use REPLACE_LINES on the implicated lines, then run RUN_TESTS once to verify.
+Valid action JSON:
+{"thought":"Observation: ... Diagnosis: ... Plan: ...","action_type":"REPLACE_LINES","start_line":12,"end_line":13,"new_code_block":"    # corrected code"}
+
+Example 2: all tests passed after RUN_TESTS -> choose SUBMIT immediately
+Input evidence snippet:
+- pass_count_summary=Tests Passed: 3/3
+- all_tests_pass_signal=true
+- last_execution_output includes "SUCCESS: ALL TESTS PASSED".
+Valid thought:
+Observation: output explicitly shows Tests Passed: 3/3 and includes the success marker. Diagnosis: there is no remaining failing evidence and additional RUN_TESTS is unnecessary. Plan: choose SUBMIT now to end the episode.
+Valid action JSON:
+{"thought":"Observation: ... Diagnosis: ... Plan: ...","action_type":"SUBMIT","start_line":null,"end_line":null,"new_code_block":null}
+
+Example 3: tests ran but syntax error present -> choose REPLACE_LINES (or UNDO_EDIT)
+Input evidence snippet:
+- syntax_error=true
+- pass_count_summary=Tests Passed: 0/3
+- traceback includes SyntaxError with a file line reference.
+Valid thought:
+Observation: syntax_error=true and traceback provides a concrete syntax failure location. Diagnosis: code is syntactically invalid, so functional debugging is blocked until syntax is repaired. Plan: apply REPLACE_LINES at the indicated lines (or UNDO_EDIT if the latest edit caused this), then RUN_TESTS.
+Valid action JSON:
+{"thought":"Observation: ... Diagnosis: ... Plan: ...","action_type":"REPLACE_LINES","start_line":8,"end_line":9,"new_code_block":"    # syntax-fixed code"}
+
 Submit gate (hard rule):
 - If any failure, error, traceback, xfailed/unfinished signal, or uncertainty remains, do not SUBMIT.
 - If all-tests-passed signal is present, do SUBMIT immediately on this turn.
@@ -104,7 +136,7 @@ Self-check before finalizing response:
 - Is this valid JSON?
 - Are all values schema-valid primitive types?
 - Are nulls set correctly for non-REPLACE_LINES actions?
-- Does the thought have exactly 3 sentences in the required Observation/Diagnosis/Plan structure?
+- Does thought include Observation:, Diagnosis:, and Plan: sections with concrete evidence from this turn?
 """
 
 
@@ -181,12 +213,15 @@ def _build_observation_text(observation: Any) -> str:
         f"{line_num} | {text}"
         for line_num, text in sorted_items[:30]
     )
+    output_head_lines = "\n".join(last_execution_output.splitlines()[:8])
     return (
         f"step_count={observation.step_count}\n"
         f"steps_remaining={observation.steps_remaining}\n"
         f"syntax_error={observation.syntax_error}\n"
         f"pass_count_summary={pass_count_text}\n"
         f"all_tests_pass_signal={str(all_tests_pass_signal).lower()}\n"
+        f"last_execution_output_chars={len(last_execution_output)}\n"
+        f"last_execution_output_head=\n{output_head_lines}\n\n"
         f"localized_context=\n{observation.localized_context}\n\n"
         f"last_execution_output=\n{last_execution_output}\n\n"
         f"code_preview=\n{code_preview}"
@@ -325,6 +360,15 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                 obs_last_output = str(getattr(result.observation, "last_execution_output", "") or "")
                 pass_count_text, all_tests_pass_signal = _extract_pass_signal_fields(obs_last_output)
                 last_action = action_trajectory[-1] if action_trajectory else "none"
+                if show_thought:
+                    output_preview = "\\n".join(obs_last_output.splitlines()[:6])
+                    print("[OBS_DEBUG]", file=sys.stderr, flush=True)
+                    print(
+                        f"chars={len(obs_last_output)} pass_count={pass_count_text} all_pass={str(all_tests_pass_signal).lower()} last_action={last_action}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    print(output_preview if output_preview else "<empty last_execution_output>", file=sys.stderr, flush=True)
                 history_messages.append(
                     {
                         "role": "user",
