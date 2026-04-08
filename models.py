@@ -36,7 +36,10 @@ class CodeAction(Action):
         description=(
             "The specific tool to use. VIEW_CODE to read. RUN_TESTS to execute and get "
             "tracebacks. REPLACE_LINES to apply a fix. UNDO_EDIT to revert your last "
-            "change if it failed. SUBMIT only when all tests pass."
+            "change if it failed. RESET_TO_ORIGINAL reverts the entire codebase back "
+            "to its initial state; use this as a last resort if your edits have "
+            "severely corrupted the code and UNDO_EDIT is not enough. SUBMIT only "
+            "when all tests pass."
         ),
     )
     start_line: Optional[int] = Field(

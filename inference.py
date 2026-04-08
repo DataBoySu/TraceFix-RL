@@ -258,6 +258,7 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
     rewards: list[float] = []
     history: list[str] = []
     history_messages: list[dict[str, str]] = []
+    action_trajectory: list[str] = []
     steps_taken = 0
     score = 0.0
     success = False
@@ -302,6 +303,7 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                         "role": "user",
                         "content": (
                             "Pick the single best next action and return only a CodeAction JSON object.\n\n"
+                            f"action_trajectory={(' -> '.join(action_trajectory) if action_trajectory else 'none')}\n\n"
                             f"{obs_text}"
                         ),
                     }
@@ -377,6 +379,7 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                 f"Action {action_str}; reward {reward:.2f}; error {error or 'null'}."
                 + (f" Thought: {action_thought}" if action_thought else "")
             )
+            action_trajectory.append(action_str)
             log_step(step=step, action=action_str, reward=reward, done=done, error=error)
 
             if done:

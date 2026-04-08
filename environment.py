@@ -331,20 +331,38 @@ class TraceFixRLGym:
             source=self._source(),
             test_callables=self._task["tests"],
         )
-        self._last_output      = output
         self._last_test_results = results
 
         reward = R_RUN_TESTS   # information-gathering bonus (Principle 5)
+        total_tests = len(self._task["tests"])
+        current_pass = 0 if syntax_err else sum(1 for t in results if t.passed)
 
         if syntax_err:
             reward += R_SYNTAX_ERROR
             self._last_run_all_passed = False
         else:
-            current_pass = sum(1 for t in results if t.passed)
             new_passes   = max(0, current_pass - self._prev_pass_count)
             reward       += new_passes * R_PER_NEW_PASS
             self._prev_pass_count = current_pass
-            self._last_run_all_passed = all(t.passed for t in results)
+            self._last_run_all_passed = (current_pass == total_tests)
+
+        if current_pass == total_tests and not syntax_err:
+            self._last_output = (
+                f"Tests Passed: {total_tests}/{total_tests}.\n\n"
+                "SUCCESS: ALL TESTS PASSED! You are finished. You MUST now use the SUBMIT action."
+            )
+        else:
+            failing_messages = [
+                t.error_message for t in results
+                if (not t.passed) and t.error_message
+            ]
+            error_traceback = (output or "").strip() or "\n\n".join(failing_messages).strip()
+            if not error_traceback:
+                error_traceback = "No traceback available."
+            self._last_output = (
+                f"Tests Passed: {current_pass}/{total_tests}.\n\n"
+                f"Traceback:\n{error_traceback}"
+            )
 
         return reward
 
