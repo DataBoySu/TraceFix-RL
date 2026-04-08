@@ -20,7 +20,14 @@ class TraceFixRLEnvironment(Environment):
         self._gym = TraceFixRLGym()
         self._state = State(episode_id="", step_count=0)
 
-    def reset(self) -> CodeObservation:
+    def reset(self, difficulty: str | None = None) -> CodeObservation:
+        if difficulty == "easy":
+            self._gym.training_step = 1
+        elif difficulty == "medium":
+            self._gym.training_step = 2000
+        elif difficulty == "hard":
+            self._gym.training_step = 6000
+
         obs, system_prompt = self._gym.reset()
         self._state = State(
             episode_id=obs.info.get("episode_id", ""),

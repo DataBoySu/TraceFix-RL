@@ -58,6 +58,7 @@ Tasks are organized in `tasks.py` into three tiers.
   Focus: data-structure invariants, eviction/promotion logic, bracket mapping, and interval merging edge behavior.
 
 Every task follows the same schema:
+
 - `name`, `description`, `difficulty`, `bug_type`
 - `code`: buggy implementation (line list)
 - `solution`: reference implementation
@@ -83,6 +84,7 @@ uv run --project . server
 ```
 
 Server endpoints:
+
 - `POST /reset`
 - `POST /step`
 - `GET /health`
@@ -99,6 +101,26 @@ Server endpoints:
 - Emits standardized stdout lines in this order:
 `[START]`, one or more `[STEP]`, then `[END]`.
 - Final score is clamped to `[0, 1]`.
+
+## Inference Flags
+
+`inference.py` supports:
+
+- `--easy`: run episode using easy-tier curriculum sampling.
+- `--medium`: run episode using medium-tier curriculum sampling.
+- `--hard`: run episode using hard-tier curriculum sampling.
+- `--debug`: print raw model response snippets for troubleshooting.
+
+Example:
+
+```bash
+python inference.py --medium --debug
+```
+
+The script also enforces a model-thinking/output cap:
+
+- `THINKING_TOKEN_LIMIT` (default `512`) is used as `max_tokens` in model calls.
+- `thought` content is hard-truncated before action validation to prevent oversized payloads.
 
 ## Docker + Deployment
 

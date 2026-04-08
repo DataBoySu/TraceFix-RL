@@ -15,17 +15,23 @@ This script prints exactly:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import json
 import os
 import re
-from typing import Any
+import sys
+from pathlib import Path
+from typing import Any, Optional
 
 from openai import OpenAI
 
 try:
     from tracefix_rl import CodeAction, TraceFixRLEnv
-except ImportError:
+except Exception:
+    ROOT_DIR = Path(__file__).resolve().parent
+    if str(ROOT_DIR) not in sys.path:
+        sys.path.insert(0, str(ROOT_DIR))
     from client import TraceFixRLEnv
     from models import CodeAction
 
@@ -40,6 +46,9 @@ TASK_NAME = os.getenv("TASK_NAME", "tracefix_rl")
 BENCHMARK = os.getenv("BENCHMARK", "tracefix_rl")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99"))
+THINKING_TOKEN_LIMIT = int(os.getenv("THINKING_TOKEN_LIMIT", "512"))
+# Approximation used for hard truncation before sending to server.
+THINKING_CHAR_LIMIT = THINKING_TOKEN_LIMIT * 4
 
 SYSTEM_PROMPT = (
     "You are controlling a Python debugging RL environment. "
@@ -54,7 +63,7 @@ def log_start(task: str, env: str, model: str) -> None:
     print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
     error_value = error if error else "null"
     print(
         f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_value}",
@@ -106,7 +115,9 @@ def _build_observation_text(observation: Any) -> str:
     )
 
 
-def _get_model_action(client: OpenAI, observation: Any, history: list[str]) -> dict[str, Any]:
+def _get_model_action(
+    client: OpenAI, observation: Any, history: list[str], debug: bool = False
+) -> dict[str, Any]:
     obs_text = _build_observation_text(observation)
     user_prompt = (
         "Pick the single best next action and return only JSON.\n\n"
@@ -121,10 +132,12 @@ def _get_model_action(client: OpenAI, observation: Any, history: list[str]) -> d
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=300,
+            max_tokens=THINKING_TOKEN_LIMIT,
             stream=False,
         )
         response_text = (completion.choices[0].message.content or "").strip()
+        if debug:
+            print(f"[DEBUG] raw_model_response={response_text[:500]}", flush=True)
         action = _extract_json(response_text)
     except Exception:
         action = {"action_type": "RUN_TESTS"}
@@ -143,9 +156,13 @@ def _get_model_action(client: OpenAI, observation: Any, history: list[str]) -> d
 
 
 def _to_code_action(action_dict: dict[str, Any]) -> CodeAction:
+    thought = action_dict.get("thought")
+    if isinstance(thought, str):
+        thought = thought[:THINKING_CHAR_LIMIT]
+
     payload = {
         "action_type": action_dict.get("action_type", "RUN_TESTS"),
-        "thought": action_dict.get("thought"),
+        "thought": thought,
         "start_line": action_dict.get("start_line"),
         "end_line": action_dict.get("end_line"),
         "new_code_block": action_dict.get("new_code_block"),
@@ -167,10 +184,10 @@ def _compute_score(step_result: Any, rewards: list[float]) -> float:
     return max(0.0, min(1.0, float(raw)))
 
 
-async def main() -> None:
+async def run(difficulty: Optional[str] = None, debug: bool = False) -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-    env: TraceFixRLEnv | None = None
+    env: Optional[TraceFixRLEnv] = None
     rewards: list[float] = []
     history: list[str] = []
     steps_taken = 0
@@ -184,7 +201,11 @@ async def main() -> None:
         else:
             env = TraceFixRLEnv(base_url=ENV_BASE_URL)
 
-        result = await env.reset()
+        if difficulty:
+            reset_kwargs = {"difficulty": difficulty}
+            result = await env.reset(**reset_kwargs)
+        else:
+            result = await env.reset()
         task_name = result.observation.info.get("task_name") or TASK_NAME
         log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
         started = True
@@ -193,7 +214,7 @@ async def main() -> None:
             if result.done:
                 break
 
-            action_dict = _get_model_action(client, result.observation, history)
+            action_dict = _get_model_action(client, result.observation, history, debug=debug)
             action = _to_code_action(action_dict)
             result = await env.step(action)
 
@@ -238,4 +259,20 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    parser = argparse.ArgumentParser(description="Run TraceFix-RL inference baseline.")
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument("--easy", action="store_true", help="Run on easy curriculum tier.")
+    group.add_argument("--medium", action="store_true", help="Run on medium curriculum tier.")
+    group.add_argument("--hard", action="store_true", help="Run on hard curriculum tier.")
+    parser.add_argument("--debug", action="store_true", help="Print debug model output snippets.")
+    args = parser.parse_args()
+
+    difficulty: Optional[str] = None
+    if args.easy:
+        difficulty = "easy"
+    elif args.medium:
+        difficulty = "medium"
+    elif args.hard:
+        difficulty = "hard"
+
+    asyncio.run(run(difficulty=difficulty, debug=args.debug))
