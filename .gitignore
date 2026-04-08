@@ -1,6 +1,12 @@
-.venv
-.agents
+.venv/
+.agents/
 .env
 uv.lock
 claude.md
 __pycache__/
+_pycache_/
+node_modules/
+package.json
+package-lock.json
+.github/
+.agent/

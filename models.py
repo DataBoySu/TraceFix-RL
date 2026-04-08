@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 
 from openenv.core.env_server.types import Action, Observation
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 ActionType = Literal[
@@ -33,42 +33,55 @@ class CodeAction(Action):
     end_line: Optional[int] = Field(default=None)
     new_code_block: Optional[str] = Field(default=None)
 
-    @field_validator("start_line", "end_line", mode="before")
+    @model_validator(mode="before")
     @classmethod
-    def _coerce_optional_int(cls, value: Any) -> Optional[int]:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            raw = value.strip()
-            if raw == "":
-                return None
-            try:
-                return int(raw)
-            except ValueError:
-                return None
-        if isinstance(value, int):
-            return value
-        return None
+    def validate_and_normalize(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
 
-    @model_validator(mode="after")
-    def validate_replace_fields(self) -> "CodeAction":
-        if self.action_type == "REPLACE_LINES":
-            if self.start_line is None:
+        action_type = data.get("action_type")
+
+        def _coerce_optional_int(value: Any) -> Optional[int]:
+            if value is None:
+                return None
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str):
+                raw = value.strip()
+                if raw == "":
+                    return None
+                try:
+                    return int(raw)
+                except ValueError:
+                    return None
+            return None
+
+        data = dict(data)
+        data["start_line"] = _coerce_optional_int(data.get("start_line"))
+        data["end_line"] = _coerce_optional_int(data.get("end_line"))
+
+        if action_type == "REPLACE_LINES":
+            start_line = data.get("start_line")
+            end_line = data.get("end_line")
+            new_code_block = data.get("new_code_block")
+
+            if start_line is None:
                 raise ValueError("REPLACE_LINES requires start_line.")
-            if self.end_line is None:
+            if end_line is None:
                 raise ValueError("REPLACE_LINES requires end_line.")
-            if self.new_code_block is None:
+            if new_code_block is None:
                 raise ValueError("REPLACE_LINES requires new_code_block.")
-            if self.start_line < 1 or self.end_line < 1:
+            if start_line < 1 or end_line < 1:
                 raise ValueError("REPLACE_LINES requires start_line and end_line >= 1.")
-            if self.start_line > self.end_line:
+            if start_line > end_line:
                 raise ValueError("REPLACE_LINES requires start_line <= end_line.")
         else:
-            # Ignore extra form fields for non-edit actions (web UI often sends defaults).
-            self.start_line = None
-            self.end_line = None
-            self.new_code_block = None
-        return self
+            # Web UI often sends default line fields for non-edit actions.
+            data["start_line"] = None
+            data["end_line"] = None
+            data["new_code_block"] = None
+
+        return data
 
 
 class TestResult(BaseModel):

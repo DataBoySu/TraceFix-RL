@@ -1,0 +1,35 @@
+# Python/cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual envs / local tooling
+.venv/
+.agents/
+node_modules/
+.agent/
+
+# Local secrets/config
+.env
+.env.*
+
+# VCS and editor noise
+.git/
+.gitignore
+.DS_Store
+.idea/
+.vscode/
+CLAUDE.md
+
+# Build / generated artifacts
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# Local outputs/logs
+outputs/
+*.log
+.github/

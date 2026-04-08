@@ -1,0 +1,32 @@
+# Local dev / VCS
+.git
+.gitignore
+.hfignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Node / tooling
+node_modules/
+
+# Secrets / local config
+.env
+.env.*
+
+# Outputs
+outputs/
+*.log
+
+.agent/
+.agents/
+.github/
+
+CLAUDE.md
+package.json
+package-lock.json
