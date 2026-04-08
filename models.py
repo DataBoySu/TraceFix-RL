@@ -59,8 +59,7 @@ class CodeAction(Action):
     new_code_block: Optional[str] = Field(
         default=None,
         description=(
-            "The exact replacement Python code. Must be properly indented to match the "
-            "surrounding code. Do not include markdown formatting or backticks."
+            "The exact replacement Python code. CRITICAL: DO NOT add leading spaces or indentation. Write the code completely flush to the left margin. The environment will automatically calculate and apply the correct indentation based on the start_line."
         ),
     )
 

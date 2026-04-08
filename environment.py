@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -406,7 +407,12 @@ class TraceFixRLGym:
 
         self._edit_history.append(list(self._code_lines))
 
-        new_lines = new_code_block.split("\n")
+        original_line = self._code_lines[start_line - 1]
+        original_indent = re.match(r"[ \t]*", original_line).group(0)
+        new_lines = self._auto_indent_replacement_block(
+            new_code_block=new_code_block,
+            original_indent=original_indent,
+        )
         self._code_lines[start_idx:end_idx] = new_lines
 
         new_end = start_line + len(new_lines) - 1
@@ -421,6 +427,29 @@ class TraceFixRLGym:
             "Call VIEW_CODE to re-orient before referencing line numbers."
         )
         return 0.0
+
+    def _auto_indent_replacement_block(
+        self, new_code_block: str, original_indent: str
+    ) -> List[str]:
+        lines = new_code_block.split("\n")
+        if not lines:
+            return []
+
+        first_indent_match = re.match(r"[ \t]*", lines[0])
+        first_indent_len = len(first_indent_match.group(0)) if first_indent_match else 0
+
+        adjusted_lines: List[str] = []
+        for line in lines:
+            leading_match = re.match(r"[ \t]*", line)
+            leading_whitespace = leading_match.group(0) if leading_match else ""
+            content = line[len(leading_whitespace):]
+            if first_indent_len > 0:
+                relative_whitespace = leading_whitespace[first_indent_len:]
+            else:
+                relative_whitespace = leading_whitespace
+            adjusted_lines.append(f"{original_indent}{relative_whitespace}{content}")
+
+        return adjusted_lines
 
     def _act_submit(self) -> float:
         output, results, syntax_err = run_code_with_tests(
