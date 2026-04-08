@@ -1,21 +1,16 @@
 """
-inference.py — Baseline Agent for Python Debugging Gym
-=======================================================
-Hackathon-compliant baseline script.  Connects to the PythonDebuggingGym
-WebSocket server and drives an OpenAI-compatible LLM to find and fix bugs.
+Inference script for Python Debugging Gym.
 
-Required environment variables:
-  HF_TOKEN       API key / HuggingFace token passed as Bearer auth
-  MODEL_NAME     Model identifier             (default: nvidia/nemotron-3-nano-4b)
-  API_BASE_URL   OpenAI-compatible base URL   (default: https://api.openai.com/v1)
+Mandatory env vars expected in deployment config:
+  API_BASE_URL
+  MODEL_NAME
+  HF_TOKEN
+  LOCAL_IMAGE_NAME  (required if using MyEnv.from_docker_image)
 
-Optional environment variables:
-  ENV_WS_URL     WebSocket URL for the gym    (default: ws://localhost:8000/ws)
-
-Mandatory stdout log lines (zero deviation in spacing or formatting):
-  [START] task=<task_name> env=PythonDebuggingGym model=<model_name>
-  [STEP]  step=<n> action=<action_type> reward=<r.rr> done=<true|false> error=<msg|null>
-  [END]   success=<true|false> steps=<n> score=<s.sss> rewards=<r1,r2,...,rn>
+This script prints exactly:
+  [START] ...
+  [STEP] ...
+  [END] ...
 """
 
 from __future__ import annotations
@@ -23,198 +18,61 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
+import re
 from typing import Any
 
-import websockets
 from openai import OpenAI
 
+from my_env import CodeAction, MyEnv
 
-# ---------------------------------------------------------------------------
-# Config  (all readable from environment at import time)
-# ---------------------------------------------------------------------------
 
-API_BASE_URL: str = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
-MODEL_NAME:   str = os.getenv("MODEL_NAME",   "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8")
-HF_TOKEN:     str = os.getenv("HF_TOKEN",     "")
-ENV_WS_URL:   str = os.getenv("ENV_WS_URL",   "ws://localhost:7860/ws")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN", "")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
 
-# ---------------------------------------------------------------------------
-# OpenAI client
-# ---------------------------------------------------------------------------
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
+TASK_NAME = os.getenv("TASK_NAME", "python_debugging_gym")
+BENCHMARK = os.getenv("BENCHMARK", "python_debugging_gym")
+MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
+SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99"))
 
-_client = OpenAI(
-    api_key=HF_TOKEN or "sk-placeholder",   # placeholder keeps the client from raising at init
-    base_url=API_BASE_URL,
+SYSTEM_PROMPT = (
+    "You are controlling a Python debugging RL environment. "
+    "Return only JSON for one action.\n"
+    'Allowed action_type values: VIEW_CODE, RUN_TESTS, REPLACE_LINES, UNDO_EDIT, RESET_TO_ORIGINAL, SUBMIT.\n'
+    "For REPLACE_LINES include start_line, end_line, new_code_block.\n"
+    "Prefer RUN_TESTS after edits and SUBMIT only when all tests pass."
 )
 
-# ---------------------------------------------------------------------------
-# Agent instruction appended after the environment's own system prompt
-# ---------------------------------------------------------------------------
 
-_AGENT_SUFFIX = """\
-
-=======================================================================
-RESPONSE FORMAT (MANDATORY)
-=======================================================================
-Respond with ONLY a valid JSON object. No markdown, no code fences,
-no explanation text — just the raw JSON.
-
-Valid action schemas (choose exactly one per turn):
-  {"action_type": "VIEW_CODE"}
-  {"action_type": "RUN_TESTS"}
-  {"action_type": "REPLACE_LINES", "start_line": N, "end_line": M, "new_code_block": "line1\\nline2"}
-  {"action_type": "UNDO_EDIT"}
-  {"action_type": "RESET_TO_ORIGINAL"}
-  {"action_type": "SUBMIT"}
-
-Rules for REPLACE_LINES:
-  - new_code_block: join multiple lines with \\n (literal backslash-n in the JSON string)
-  - Include exact Python indentation (leading spaces) on every line
-  - Do NOT include a trailing \\n character
-  - After REPLACE_LINES, call VIEW_CODE to re-orient before the next edit
-
-Rules for UNDO_EDIT / RESET_TO_ORIGINAL:
-  - UNDO_EDIT reverts the last REPLACE_LINES. Use when an edit made things worse.
-  - RESET_TO_ORIGINAL restores the original broken code. Last resort only.
-  - Both cost -0.10. Prefer fixing forward over backtracking.
-"""
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
 
-# ---------------------------------------------------------------------------
-# Observation formatter
-# ---------------------------------------------------------------------------
-
-def _format_obs(obs: dict[str, Any]) -> str:
-    """Convert a CodeObservation dict into a compact string for the LLM."""
-    parts: list[str] = []
-
-    if obs.get("syntax_error"):
-        parts.append("⚠ SYNTAX ERROR in current code — fix indentation/brackets first.\n")
-
-    localized = obs.get("localized_context", "")
-    if localized:
-        parts.append(f"[Context around last edit]\n{localized}\n")
-
-    last_out = obs.get("last_execution_output", "")
-    if last_out:
-        parts.append(f"[Last execution output]\n{last_out}\n")
-
-    test_results: list[dict] = obs.get("test_results", [])
-    if test_results:
-        lines = []
-        for t in test_results:
-            status = "PASS" if t.get("passed") else "FAIL"
-            msg    = t.get("error_message") or ""
-            name   = t.get("test_name", "?")
-            lines.append(f"  {status}  {name}" + (f": {msg}" if msg else ""))
-        parts.append("[Test results]\n" + "\n".join(lines) + "\n")
-
-    remaining = obs.get("steps_remaining", 0)
-    parts.append(f"[Steps remaining: {remaining}]")
-
-    return "\n".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# LLM call
-# ---------------------------------------------------------------------------
-
-_ACTION_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "CodeAction",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "thought": {
-                    "type": "string",
-                    "description": "Mandatory reasoning before selecting action_type.",
-                },
-                "action_type": {
-                    "type": "string",
-                    "enum": [
-                        "VIEW_CODE", "RUN_TESTS", "REPLACE_LINES",
-                        "UNDO_EDIT", "RESET_TO_ORIGINAL", "SUBMIT",
-                    ],
-                },
-                "start_line":     {"type": ["integer", "null"]},
-                "end_line":       {"type": ["integer", "null"]},
-                "new_code_block": {"type": ["string",  "null"]},
-            },
-            "required": ["thought", "action_type"],
-            "additionalProperties": False,
-        },
-    },
-}
-
-
-def _call_llm(system_prompt: str, messages: list[dict]) -> str:
-    """
-    Call the configured LLM and return the raw text reply.
-
-    Tries json_schema structured output first (LM Studio / vLLM / newer
-    llama.cpp all support this).  Falls back to a plain call if the backend
-    raises an error for the response_format parameter — _extract_json()
-    then handles extraction from free-form text.
-    """
-    base_kwargs: dict = dict(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": system_prompt + _AGENT_SUFFIX},
-            *messages,
-        ],
-        temperature=0.0,
+def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+    error_value = error if error else "null"
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_value}",
+        flush=True,
     )
-    try:
-        response = _client.chat.completions.create(
-            **base_kwargs,
-            response_format=_ACTION_SCHEMA,
-        )
-    except Exception:
-        # Backend doesn't support json_schema — fall back to free-form
-        response = _client.chat.completions.create(**base_kwargs)
-    
-    msg = response.choices[0].message
-    content = msg.content
-    
-    # Fallback for reasoning models (e.g., via LM Studio) that place their
-    # entire output in the reasoning_content field instead of content.
-    if not content:
-        try:
-            msg_dict = msg.model_dump()
-            content = msg_dict.get("reasoning_content", "") or ""
-        except AttributeError:
-            pass
-            
-    return content or ""
 
 
-# ---------------------------------------------------------------------------
-# Constrained JSON extraction  (works with any local or cloud model)
-# ---------------------------------------------------------------------------
+def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
+    )
 
-def _extract_json(text: str) -> dict:
-    """
-    Best-effort JSON extraction from raw LLM output.
 
-    Tries in order:
-      1. Direct json.loads  (model produced clean JSON)
-      2. Strip ```json ... ``` / ``` ... ``` markdown fences
-      3. Regex: grab first {...} block in the text
-      4. Safe fallback: {"action_type": "VIEW_CODE"}
-    """
-    import re
-
-    # 1. Direct parse
+def _extract_json(text: str) -> dict[str, Any]:
     stripped = text.strip()
     try:
         return json.loads(stripped)
     except json.JSONDecodeError:
         pass
 
-    # 2. Markdown code fence  ```json\n{...}\n```
     fence = re.search(r"```(?:json)?\s*({.*?})\s*```", stripped, re.DOTALL)
     if fence:
         try:
@@ -222,155 +80,158 @@ def _extract_json(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # 3. First {...} block anywhere in the text
-    brace = re.search(r"({.*?})", stripped, re.DOTALL)
-    if brace:
+    block = re.search(r"({.*?})", stripped, re.DOTALL)
+    if block:
         try:
-            return json.loads(brace.group(1))
+            return json.loads(block.group(1))
         except json.JSONDecodeError:
             pass
 
-    # All extraction attempts failed.
-    # Return an invalid action_type so Pydantic rejects it at the server,
-    # the server returns an error envelope, and THAT error is fed back to
-    # the LLM on the next turn — breaking the silent mask loop.
-    # DO NOT default to VIEW_CODE here.
-    return {"action_type": "PARSE_ERROR", "thought": f"Failed to parse LLM output as JSON: {text[:120]}"}
+    return {"action_type": "RUN_TESTS"}
 
 
-# ---------------------------------------------------------------------------
-# Episode runner
-# ---------------------------------------------------------------------------
-
-async def run_episode(difficulty: str = None, show_thought: bool = False) -> None:
-    """
-    Connect to the gym, run one full episode with an LLM agent,
-    and emit the three required log lines.
-    """
-    rewards:      list[float] = []
-    step:         int         = 0
-    system_prompt: str        = ""
-    task_name:    str         = "unknown"
-    messages:     list[dict]  = []
-    success:      bool        = False
-    obs:          dict        = {}
-
-    ws_url = ENV_WS_URL
-    if difficulty:
-        separator = "&" if "?" in ws_url else "?"
-        ws_url = f"{ws_url}{separator}difficulty={difficulty}"
-
-    async with websockets.connect(ws_url) as ws:
-
-        # ── Receive initial observation + system prompt ──────────────────
-        raw  = await ws.recv()
-        data = json.loads(raw)
-
-        system_prompt = data.get("info", {}).get("system_prompt", "")
-        obs           = data.get("observation", {})
-        task_name     = obs.get("info", {}).get("task_name", "unknown")
-
-        # ── [START] log line ─────────────────────────────────────────────
-        print(
-            f"[START] task={task_name} env=PythonDebuggingGym model={MODEL_NAME}",
-            flush=True,
-        )
-
-        # ── RL loop ──────────────────────────────────────────────────────
-        while True:
-            step     += 1
-            error_str  = "null"
-            action_type = "VIEW_CODE"   # will be overwritten by a real parse
-
-            # Build observation message for the LLM
-            obs_text = _format_obs(obs)
-            messages.append({"role": "user", "content": obs_text})
-
-            # Call LLM
-            try:
-                llm_reply   = _call_llm(system_prompt, messages)
-                if os.getenv("DEBUG_LOG") == "1":
-                    print(f"\n[DEBUG RAW LLM]: {llm_reply}\n", flush=True)  # see what model actually outputs
-                action_json = _extract_json(llm_reply)
-                action_type = action_json.get("action_type", "VIEW_CODE")
-                messages.append({"role": "assistant", "content": llm_reply})
-            except Exception as exc:
-                # LLM call itself failed — surface error in log, do NOT mask as VIEW_CODE.
-                # Send a harmless VIEW_CODE this turn but pass the error text back as
-                # the next user message so the model sees what went wrong.
-                error_str   = str(exc).replace("\n", " ")[:200]
-                action_type = "VIEW_CODE"
-                action_json = {"action_type": "VIEW_CODE"}
-                messages.append({"role": "user", "content": f"[SYSTEM ERROR] {error_str}"})
-
-            if show_thought:
-                thought = action_json.get("thought", "")
-                if thought:
-                    print(f"\n[THOUGHT]: {thought}\n", flush=True)
-
-            # Send action to the environment
-            await ws.send(json.dumps({"action": action_json}))
-
-            # Receive response
-            raw  = await ws.recv()
-            data = json.loads(raw)
-
-            # Server may return a validation-error envelope (no "observation" key)
-            if "observation" not in data:
-                error_str = str(data.get("error", "server_error"))[:200]
-                reward, done = 0.0, False
-            else:
-                reward = float(data.get("reward", 0.0))
-                done   = bool(data.get("done", False))
-                obs    = data.get("observation", {})
-
-                if done:
-                    test_results = obs.get("test_results", [])
-                    total        = len(test_results)
-                    passes       = sum(1 for t in test_results if t.get("passed"))
-                    success      = (total > 0 and passes == total)
-
-            rewards.append(reward)
-
-            # ── [STEP] log line ──────────────────────────────────────────
-            done_str = "true" if done else "false"
-            print(
-                f"[STEP] step={step} action={action_type} "
-                f"reward={reward:.2f} done={done_str} error={error_str}",
-                flush=True,
-            )
-
-            if done:
-                break   # server will auto-reset, but we exit after one episode
-
-    # ── [END] log line ───────────────────────────────────────────────────────
-    success_str = "true" if success else "false"
-    # Pull clamped final_score from info dict if available, else derive from rewards
-    final_score = data.get("info", {}).get("final_score", None) if done else None
-    if final_score is None:
-        final_score = max(0.0, min(1.0, sum(rewards)))
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(
-        f"[END] success={success_str} steps={step} score={final_score:.3f} rewards={rewards_str}",
-        flush=True,
+def _build_observation_text(observation: Any) -> str:
+    code_preview = "\n".join(observation.code_lines[:30]) if observation.code_lines else ""
+    return (
+        f"step_count={observation.step_count}\n"
+        f"steps_remaining={observation.steps_remaining}\n"
+        f"syntax_error={observation.syntax_error}\n"
+        f"localized_context=\n{observation.localized_context}\n\n"
+        f"last_execution_output=\n{observation.last_execution_output}\n\n"
+        f"code_preview=\n{code_preview}"
     )
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def _get_model_action(client: OpenAI, observation: Any, history: list[str]) -> dict[str, Any]:
+    obs_text = _build_observation_text(observation)
+    user_prompt = (
+        "Pick the single best next action and return only JSON.\n\n"
+        f"{obs_text}\n\n"
+        f"history:\n{chr(10).join(history[-5:]) if history else 'none'}"
+    )
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=300,
+            stream=False,
+        )
+        response_text = (completion.choices[0].message.content or "").strip()
+        action = _extract_json(response_text)
+    except Exception:
+        action = {"action_type": "RUN_TESTS"}
 
-def main() -> None:
-    import argparse
-    parser = argparse.ArgumentParser(description="Run the Python debugging agent.")
-    parser.add_argument("--easy", action="store_const", dest="difficulty", const="easy", help="Run an easy task.")
-    parser.add_argument("--medium", action="store_const", dest="difficulty", const="medium", help="Run a medium task.")
-    parser.add_argument("--hard", action="store_const", dest="difficulty", const="hard", help="Run a hard task.")
-    parser.add_argument("--thought", action="store_true", dest="show_thought", help="Print the agent's chain-of-thought reasoning.")
-    
-    args = parser.parse_args()
-    asyncio.run(run_episode(difficulty=args.difficulty, show_thought=args.show_thought))
+    if action.get("action_type") not in {
+        "VIEW_CODE",
+        "RUN_TESTS",
+        "REPLACE_LINES",
+        "UNDO_EDIT",
+        "RESET_TO_ORIGINAL",
+        "SUBMIT",
+    }:
+        action = {"action_type": "RUN_TESTS"}
+
+    return action
+
+
+def _to_code_action(action_dict: dict[str, Any]) -> CodeAction:
+    payload = {
+        "action_type": action_dict.get("action_type", "RUN_TESTS"),
+        "thought": action_dict.get("thought"),
+        "start_line": action_dict.get("start_line"),
+        "end_line": action_dict.get("end_line"),
+        "new_code_block": action_dict.get("new_code_block"),
+    }
+    try:
+        return CodeAction(**payload)
+    except Exception:
+        return CodeAction(action_type="RUN_TESTS")
+
+
+def _compute_score(step_result: Any, rewards: list[float]) -> float:
+    meta = step_result.observation.metadata or {}
+    raw = meta.get("final_score")
+    if raw is None:
+        info = step_result.observation.info or {}
+        raw = info.get("final_score")
+    if raw is None:
+        raw = sum(rewards)
+    return max(0.0, min(1.0, float(raw)))
+
+
+async def main() -> None:
+    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+
+    env: MyEnv | None = None
+    rewards: list[float] = []
+    history: list[str] = []
+    steps_taken = 0
+    score = 0.0
+    success = False
+    started = False
+
+    try:
+        if LOCAL_IMAGE_NAME:
+            env = await MyEnv.from_docker_image(LOCAL_IMAGE_NAME)
+        else:
+            env = MyEnv(base_url=ENV_BASE_URL)
+
+        result = await env.reset()
+        task_name = result.observation.info.get("task_name") or TASK_NAME
+        log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
+        started = True
+
+        for step in range(1, MAX_STEPS + 1):
+            if result.done:
+                break
+
+            action_dict = _get_model_action(client, result.observation, history)
+            action = _to_code_action(action_dict)
+            result = await env.step(action)
+
+            reward = float(result.reward or 0.0)
+            done = bool(result.done)
+            action_str = action.action_type
+
+            obs_meta = result.observation.metadata or {}
+            error = obs_meta.get("last_action_error")
+            if error is not None:
+                error = str(error).replace("\n", " ")
+
+            rewards.append(reward)
+            steps_taken = step
+            history.append(f"step={step} action={action_str} reward={reward:.2f}")
+            log_step(step=step, action=action_str, reward=reward, done=done, error=error)
+
+            if done:
+                break
+
+        score = _compute_score(result, rewards)
+        success = score >= SUCCESS_SCORE_THRESHOLD
+
+    except Exception as exc:
+        if not started:
+            log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+            started = True
+        msg = str(exc).replace("\n", " ")
+        if steps_taken == 0:
+            log_step(step=1, action="RUN_TESTS", reward=0.0, done=False, error=msg)
+            steps_taken = 1
+            rewards.append(0.0)
+        score = 0.0
+        success = False
+    finally:
+        if env is not None:
+            try:
+                await env.close()
+            except Exception:
+                pass
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())

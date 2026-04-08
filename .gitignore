@@ -2,3 +2,4 @@
 .agents
 .env
 uv.lock
+claude.md

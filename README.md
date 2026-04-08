@@ -5,7 +5,7 @@ colorFrom: blue
 colorTo: cyan
 sdk: docker
 pinned: false
-app_port: 8000
+app_port: 7860
 base_path: /web
 tags:
   - openenv
@@ -30,7 +30,7 @@ iteratively viewing, editing, and testing code snippets until all tests pass.
 
 ```bash
 uv sync
-uv run --project . server --port 8000
+uv run --project . server --port 7860
 ```
 
 Server endpoints:
@@ -48,8 +48,8 @@ openenv push
 
 ## Validate Submission
 
-From repo root (`RL_ENV_FINAL`):
+From repo:
 
 ```bash
-./pre-val.sh https://<your-space>.hf.space ./my_env
+./pre-val.sh https://<your-space>.hf.space .
 ```
