@@ -19,6 +19,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -78,6 +79,13 @@ How to read last_execution_output correctly:
 - Treat syntax errors as highest priority and fix them before semantic issues.
 - Never claim success unless output clearly indicates complete pass status.
 
+Terminal decision rule (no waiting):
+- If last_execution_output contains both a full pass count pattern (for example, "Tests Passed: N/N")
+    and the success marker "SUCCESS: ALL TESTS PASSED", the next action must be SUBMIT.
+- If all_tests_pass_signal=true in the observation, the next action must be SUBMIT.
+- Once this pass signal is present, RUN_TESTS is no longer a valid next action.
+- Do not wait for extra confirmation, additional logs, or another RUN_TESTS cycle after this signal.
+
 Action policy:
 - VIEW_CODE when line mapping or surrounding context is insufficient.
 - RUN_TESTS to collect fresh evidence after edits or when uncertain.
@@ -85,9 +93,12 @@ Action policy:
 - UNDO_EDIT if latest change worsened results or introduced new failures.
 - RESET_TO_ORIGINAL only as last-resort recovery.
 - SUBMIT only when last_execution_output explicitly and unambiguously indicates all tests passed.
+- After RUN_TESTS, do not choose RUN_TESTS again immediately unless test evidence is genuinely missing.
+- Treat "no output" as invalid reasoning when pass_count_summary or traceback text is present.
 
 Submit gate (hard rule):
 - If any failure, error, traceback, xfailed/unfinished signal, or uncertainty remains, do not SUBMIT.
+- If all-tests-passed signal is present, do SUBMIT immediately on this turn.
 
 Self-check before finalizing response:
 - Is this valid JSON?
@@ -146,7 +157,21 @@ def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> No
     )
 
 
+def _extract_pass_signal_fields(last_execution_output: str) -> tuple[str, bool]:
+    pass_count_match = re.search(r"Tests Passed:\s*(\d+)\s*/\s*(\d+)", last_execution_output)
+    pass_count_text = pass_count_match.group(0) if pass_count_match else "unknown"
+    all_tests_pass_signal = (
+        ("SUCCESS: ALL TESTS PASSED" in last_execution_output)
+        and bool(pass_count_match)
+        and (pass_count_match.group(1) == pass_count_match.group(2))
+    )
+    return pass_count_text, all_tests_pass_signal
+
+
 def _build_observation_text(observation: Any) -> str:
+    last_execution_output = str(getattr(observation, "last_execution_output", "") or "")
+    pass_count_text, all_tests_pass_signal = _extract_pass_signal_fields(last_execution_output)
+
     code_dict = getattr(observation, "code_dict", {}) or {}
     sorted_items = sorted(
         ((int(line_num), text) for line_num, text in code_dict.items()),
@@ -160,8 +185,10 @@ def _build_observation_text(observation: Any) -> str:
         f"step_count={observation.step_count}\n"
         f"steps_remaining={observation.steps_remaining}\n"
         f"syntax_error={observation.syntax_error}\n"
+        f"pass_count_summary={pass_count_text}\n"
+        f"all_tests_pass_signal={str(all_tests_pass_signal).lower()}\n"
         f"localized_context=\n{observation.localized_context}\n\n"
-        f"last_execution_output=\n{observation.last_execution_output}\n\n"
+        f"last_execution_output=\n{last_execution_output}\n\n"
         f"code_preview=\n{code_preview}"
     )
 
@@ -295,12 +322,19 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                     print(action.thought, file=sys.stderr, flush=True)
             else:
                 obs_text = _build_observation_text(result.observation)
+                obs_last_output = str(getattr(result.observation, "last_execution_output", "") or "")
+                pass_count_text, all_tests_pass_signal = _extract_pass_signal_fields(obs_last_output)
+                last_action = action_trajectory[-1] if action_trajectory else "none"
                 history_messages.append(
                     {
                         "role": "user",
                         "content": (
                             "Pick the single best next action and return only one valid CodeAction JSON object. "
-                            "Use localized_context/last_execution_output as evidence, and do not SUBMIT unless all tests explicitly pass.\n\n"
+                            "Use localized_context/last_execution_output as evidence, and do not SUBMIT unless all tests explicitly pass. "
+                            "If all_tests_pass_signal=true, you must choose SUBMIT now and must not choose RUN_TESTS again. "
+                            "Do not wait for additional test output when all_tests_pass_signal=true. "
+                            "If last_action was RUN_TESTS and all_tests_pass_signal=false, choose REPLACE_LINES or VIEW_CODE next, not RUN_TESTS again.\n\n"
+                            f"decision_guard: last_action={last_action}, pass_count_summary={pass_count_text}, all_tests_pass_signal={str(all_tests_pass_signal).lower()}\n\n"
                             f"action_trajectory={(' -> '.join(action_trajectory) if action_trajectory else 'none')}\n\n"
                             f"{obs_text}"
                         ),
