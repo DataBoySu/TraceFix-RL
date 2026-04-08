@@ -47,37 +47,35 @@ MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99"))
 
 SYSTEM_PROMPT = """\
-You are the policy controller for a Python debugging RL environment.
+You are an autonomous Software Engineering RL Agent. 
+You are strictly evaluated on your ability to reason deeply before taking action. 
 
-Operating contract:
+OPERATING CONTRACT:
 1. Output exactly one CodeAction object per turn.
-2. Use the prior conversation history, especially your earlier thoughts and failed outputs, to avoid repeating mistakes.
-3. Treat PARSE_ERROR feedback as hard constraints that must be corrected on the next turn.
+2. You MUST read your conversation history. If you just tried an edit and the tests still fail, DO NOT repeat the same edit.
+3. PARSE_ERROR means your last output was invalid. Fix your formatting immediately.
 
-Reasoning procedure (must be reflected in thought):
-1. Read localized_context and last_execution_output first.
-2. If tests failed, identify the most likely failing line and root cause.
-3. Decide the next single best action that maximizes test progress.
-4. If editing, reference exact line keys from code_dict and provide correctly indented replacement code.
-5. Only SUBMIT when current evidence shows all tests pass.
+HOW TO THINK (The 'thought' field is mandatory):
+Before choosing an action_type, your 'thought' MUST contain these exact 3 sentences:
+1. "Observation: [State what you see in the test output or traceback]"
+2. "Diagnosis: [Explain exactly which line is causing the bug and why]"
+3. "Plan: [State exactly what tool you will use next to fix it]"
 
-Action policy:
-- VIEW_CODE: only when you need to re-orient line mapping.
-- RUN_TESTS: use to obtain fresh traceback evidence and validate edits.
-- REPLACE_LINES: apply a focused fix for one concrete bug.
-- UNDO_EDIT: use when latest edit regressed behavior.
-- RESET_TO_ORIGINAL: last resort recovery.
-- SUBMIT: only after explicit all-pass confirmation.
+ACTION POLICY:
+- VIEW_CODE: Read the code mapping.
+- RUN_TESTS: Execute tests to get the traceback.
+- REPLACE_LINES: Apply a focused fix. Use EXACT line numbers from code_dict.
+- UNDO_EDIT: Revert if the last edit caused a SyntaxError.
+- SUBMIT: Use this ONLY when the last_execution_output explicitly confirms all tests pass.
+- RESET_TO_ORIGINAL: Use this if wanting to reset the code file to try again or with a different strategy.
 
-Formatting policy:
-- Return a valid CodeAction object only.
-- No markdown, no prose outside the action fields.
-- Use EXACT keys: thought, action_type, start_line, end_line, new_code_block.
-- NEVER use legacy keys such as type, lines, or source.
+VALID JSON EXAMPLES (Follow this exact thought depth):
 
-Valid JSON examples:
-{"thought":"I need traceback details before editing.","action_type":"RUN_TESTS","start_line":null,"end_line":null,"new_code_block":null}
-{"thought":"Line 2 slicing step is wrong; replace only that line.","action_type":"REPLACE_LINES","start_line":2,"end_line":2,"new_code_block":"    return s[::-1]"}
+Example 1 (Planning an edit):
+{"thought":"Observation: The last_execution_output shows an IndexError on line 12 because 'i+1' is out of bounds. Diagnosis: The loop condition 'for i in range(len(arr))' goes to the end of the array, so 'arr[i+1]' fails on the last iteration. Plan: I will use REPLACE_LINES on line 10 to change the loop to 'range(len(arr)-1)'.","action_type":"REPLACE_LINES","start_line":10,"end_line":10,"new_code_block":"    for i in range(len(arr) - 1):"}
+
+Example 2 (Testing):
+{"thought":"Observation: I just replaced line 10 with the corrected loop condition. Diagnosis: I need to verify if this change fixed the IndexError and didn't break other boundary tests. Plan: I will use RUN_TESTS to get fresh evidence.","action_type":"RUN_TESTS","start_line":null,"end_line":null,"new_code_block":null}
 """
 
 
@@ -156,7 +154,7 @@ def log_step(step: int, action: str, reward: float, done: bool, error: Optional[
 def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
         flush=True,
     )
 
@@ -264,6 +262,9 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
     score = 0.0
     success = False
     started = False
+    kill_switch_triggered = False
+    last_action_type: Optional[str] = None
+    consecutive_same_action_count = 0
 
     try:
         if LOCAL_IMAGE_NAME:
@@ -335,6 +336,27 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
                         ),
                     )
 
+            current_action_type = action.action_type
+            if current_action_type == last_action_type:
+                consecutive_same_action_count += 1
+            else:
+                consecutive_same_action_count = 1
+                last_action_type = current_action_type
+
+            if (
+                current_action_type == "RUN_TESTS"
+                and consecutive_same_action_count >= 3
+            ):
+                kill_switch_triggered = True
+                history.append(
+                    "KILL_SWITCH: RUN_TESTS selected 3 times consecutively. "
+                    "Terminating episode early to prevent looping."
+                )
+                steps_taken = step
+                success = False
+                score = 0.0
+                break
+
             result = await env.step(action)
 
             reward = float(result.reward or 0.0)
@@ -360,8 +382,9 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
             if done:
                 break
 
-        score = _compute_score(result, rewards)
-        success = score >= SUCCESS_SCORE_THRESHOLD
+        if not kill_switch_triggered:
+            score = _compute_score(result, rewards)
+            success = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as exc:
         if not started:
