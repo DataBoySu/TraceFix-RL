@@ -1,4 +1,4 @@
-"""Pydantic schema layer for the Python Debugging Gym OpenEnv environment."""
+"""Pydantic schema layer for SWE-Gym - Software Engineer Gym."""
 
 from __future__ import annotations
 

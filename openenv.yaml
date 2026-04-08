@@ -1,5 +1,5 @@
 spec_version: 1
-name: python_debugging_gym
+name: swe_gym
 type: space
 runtime: fastapi
 app: server.app:app

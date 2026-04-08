@@ -23,18 +23,10 @@ RUN if ! command -v uv >/dev/null 2>&1; then \
     fi
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-install-project --no-editable; \
-    else \
-        uv sync --no-install-project --no-editable; \
-    fi
+    uv sync --no-install-project --no-editable
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-editable; \
-    else \
-        uv sync --no-editable; \
-    fi
+    uv sync --no-editable
 
 FROM ${BASE_IMAGE}
 
@@ -43,10 +35,17 @@ WORKDIR /app
 COPY --from=builder /app/env/.venv /app/.venv
 COPY --from=builder /app/env /app/env
 
+# Ported from RL_ENV Dockerfile hardening:
+# run the HF Space as uid 1000 rather than root.
+RUN useradd -m -u 1000 appuser && \
+    chown -R appuser:appuser /app
+
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:7860/health || exit 1
+
+USER appuser
 
 CMD ["sh", "-c", "cd /app/env && uvicorn server.app:app --host 0.0.0.0 --port 7860"]

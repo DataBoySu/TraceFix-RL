@@ -4,8 +4,8 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""My Env environment server components."""
+"""SWE-Gym server components."""
 
-from .my_env_environment import MyEnvironment
+from .swe_gym_environment import SWEGymEnvironment
 
-__all__ = ["MyEnvironment"]
+__all__ = ["SWEGymEnvironment"]

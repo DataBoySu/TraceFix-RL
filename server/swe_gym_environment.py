@@ -4,7 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""OpenEnv adapter around the PythonDebuggingGym core environment."""
+"""OpenEnv adapter around the SWE-Gym core environment."""
 
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
@@ -17,7 +17,7 @@ except ImportError:
     from models import CodeAction, CodeObservation
 
 
-class MyEnvironment(Environment):
+class SWEGymEnvironment(Environment):
     """Environment implementation compatible with OpenEnv's server interface."""
 
     # Enable concurrent WebSocket sessions.

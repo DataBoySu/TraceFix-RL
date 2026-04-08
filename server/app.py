@@ -4,7 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""FastAPI entry point for the Python Debugging Gym OpenEnv environment."""
+"""FastAPI entry point for SWE-Gym - Software Engineer Gym."""
 
 try:
     from openenv.core.env_server.http_server import create_app
@@ -15,22 +15,22 @@ except Exception as e:  # pragma: no cover
 
 try:
     from ..models import CodeAction, CodeObservation
-    from .my_env_environment import MyEnvironment
+    from .swe_gym_environment import SWEGymEnvironment
 except ImportError:
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from models import CodeAction, CodeObservation
-    from server.my_env_environment import MyEnvironment
+    from server.swe_gym_environment import SWEGymEnvironment
 
 
 # Create the app with web interface and README integration
 app = create_app(
-    MyEnvironment,
+    SWEGymEnvironment,
     CodeAction,
     CodeObservation,
-    env_name="python_debugging_gym",
+    env_name="swe_gym",
     max_concurrent_envs=1,  # increase this number to allow more concurrent WebSocket sessions
 )
 

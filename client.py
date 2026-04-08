@@ -4,7 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Client for the Python Debugging Gym OpenEnv environment."""
+"""Client for the SWE-Gym OpenEnv environment."""
 
 from typing import Dict
 
@@ -18,11 +18,11 @@ except ImportError:
     from models import CodeAction, CodeObservation, TestResult
 
 
-class MyEnv(
+class SWEGymEnv(
     EnvClient[CodeAction, CodeObservation, State]
 ):
     """
-    Client for the My Env Environment.
+    Client for the SWE-Gym environment.
 
     This client maintains a persistent WebSocket connection to the environment server,
     enabling efficient multi-step interactions with lower latency.
@@ -30,7 +30,7 @@ class MyEnv(
 
     Example:
         >>> # Connect to a running server
-        >>> with MyEnv(base_url="http://localhost:8000") as client:
+        >>> with SWEGymEnv(base_url="http://localhost:7860") as client:
         ...     result = client.reset()
         ...     print(result.observation.echoed_message)
         ...
@@ -39,7 +39,7 @@ class MyEnv(
 
     Example with Docker:
         >>> # Automatically start container and connect
-        >>> client = MyEnv.from_docker_image("my_env-env:latest")
+        >>> client = SWEGymEnv.from_docker_image("swe-gym:latest")
         >>> try:
         ...     result = client.reset()
         ...     result = client.step(MyAction(message="Test"))
@@ -107,3 +107,7 @@ class MyEnv(
             episode_id=payload.get("episode_id"),
             step_count=payload.get("step_count", 0),
         )
+
+
+# Backward-compatible alias for older code paths.
+MyEnv = SWEGymEnv

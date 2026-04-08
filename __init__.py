@@ -4,14 +4,15 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Python Debugging Gym OpenEnv package."""
+"""SWE-Gym OpenEnv package."""
 
-from .client import MyEnv
+from .client import MyEnv, SWEGymEnv
 from .models import CodeAction, CodeObservation, TestResult
 
 __all__ = [
     "CodeAction",
     "CodeObservation",
     "TestResult",
+    "SWEGymEnv",
     "MyEnv",
 ]

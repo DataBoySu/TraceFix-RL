@@ -1,5 +1,5 @@
 """
-Inference script for Python Debugging Gym.
+Inference script for SWE-Gym - Software Engineer Gym.
 
 Mandatory env vars expected in deployment config:
   API_BASE_URL
@@ -23,7 +23,11 @@ from typing import Any
 
 from openai import OpenAI
 
-from my_env import CodeAction, MyEnv
+try:
+    from swe_gym import CodeAction, SWEGymEnv
+except ImportError:
+    from client import SWEGymEnv
+    from models import CodeAction
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
@@ -32,8 +36,8 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME", "")
 
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
-TASK_NAME = os.getenv("TASK_NAME", "python_debugging_gym")
-BENCHMARK = os.getenv("BENCHMARK", "python_debugging_gym")
+TASK_NAME = os.getenv("TASK_NAME", "swe_gym")
+BENCHMARK = os.getenv("BENCHMARK", "swe_gym")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99"))
 
@@ -166,7 +170,7 @@ def _compute_score(step_result: Any, rewards: list[float]) -> float:
 async def main() -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
-    env: MyEnv | None = None
+    env: SWEGymEnv | None = None
     rewards: list[float] = []
     history: list[str] = []
     steps_taken = 0
@@ -176,9 +180,9 @@ async def main() -> None:
 
     try:
         if LOCAL_IMAGE_NAME:
-            env = await MyEnv.from_docker_image(LOCAL_IMAGE_NAME)
+            env = await SWEGymEnv.from_docker_image(LOCAL_IMAGE_NAME)
         else:
-            env = MyEnv(base_url=ENV_BASE_URL)
+            env = SWEGymEnv(base_url=ENV_BASE_URL)
 
         result = await env.reset()
         task_name = result.observation.info.get("task_name") or TASK_NAME
