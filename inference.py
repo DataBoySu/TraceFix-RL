@@ -19,7 +19,6 @@ import argparse
 import asyncio
 import json
 import os
-import re
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -46,7 +45,6 @@ TASK_NAME = os.getenv("TASK_NAME", "tracefix_rl")
 BENCHMARK = os.getenv("BENCHMARK", "tracefix_rl")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99"))
-THINKING_TOKEN_LIMIT = int(os.getenv("THINKING_TOKEN_LIMIT", "1000"))
 MAX_PARSE_RETRIES = 3
 
 SYSTEM_PROMPT = (
@@ -111,26 +109,15 @@ def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> No
 
 def _extract_json(text: str) -> dict[str, Any]:
     stripped = text.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        first_newline = stripped.find("\n")
+        if first_newline == -1:
+            raise ValueError("Invalid JSON response.")
+        stripped = stripped[first_newline + 1 : -3].strip()
     try:
         return json.loads(stripped)
-    except json.JSONDecodeError:
-        pass
-
-    fence = re.search(r"```(?:json)?\s*({.*?})\s*```", stripped, re.DOTALL)
-    if fence:
-        try:
-            return json.loads(fence.group(1))
-        except json.JSONDecodeError:
-            pass
-
-    block = re.search(r"({.*?})", stripped, re.DOTALL)
-    if block:
-        try:
-            return json.loads(block.group(1))
-        except json.JSONDecodeError:
-            pass
-
-    raise ValueError("Invalid JSON response.")
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid JSON response.") from exc
 
 
 def _build_observation_text(observation: Any) -> str:
@@ -169,7 +156,6 @@ def _get_model_response(
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.0,
-        "max_tokens": THINKING_TOKEN_LIMIT,
         "stream": False,
     }
     try:

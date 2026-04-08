@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 
 from openenv.core.env_server.types import Action, Observation
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 ActionType = Literal[
@@ -21,67 +21,45 @@ ActionType = Literal[
 class CodeAction(Action):
     """Structured action consumed by the environment."""
 
+    model_config = ConfigDict(strict=True)
+
     thought: str = Field(
         ...,
-        description="Mandatory reasoning string before selecting an action.",
+        description=(
+            "MANDATORY. Analyze the localized_context and last_execution_output. "
+            "If tests failed, identify the error line and root cause. Explicitly plan "
+            "your next action before executing it."
+        ),
     )
     action_type: ActionType = Field(
         ...,
-        description="One of VIEW_CODE, RUN_TESTS, REPLACE_LINES, UNDO_EDIT, RESET_TO_ORIGINAL, SUBMIT.",
+        description=(
+            "The specific tool to use. VIEW_CODE to read. RUN_TESTS to execute and get "
+            "tracebacks. REPLACE_LINES to apply a fix. UNDO_EDIT to revert your last "
+            "change if it failed. SUBMIT only when all tests pass."
+        ),
     )
-    start_line: Optional[int] = Field(default=None)
-    end_line: Optional[int] = Field(default=None)
-    new_code_block: Optional[str] = Field(default=None)
-
-    @model_validator(mode="before")
-    @classmethod
-    def validate_and_normalize(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-
-        action_type = data.get("action_type")
-
-        def _coerce_optional_int(value: Any) -> Optional[int]:
-            if value is None:
-                return None
-            if isinstance(value, int):
-                return value
-            if isinstance(value, str):
-                raw = value.strip()
-                if raw == "":
-                    return None
-                try:
-                    return int(raw)
-                except ValueError:
-                    return None
-            return None
-
-        data = dict(data)
-        data["start_line"] = _coerce_optional_int(data.get("start_line"))
-        data["end_line"] = _coerce_optional_int(data.get("end_line"))
-
-        if action_type == "REPLACE_LINES":
-            start_line = data.get("start_line")
-            end_line = data.get("end_line")
-            new_code_block = data.get("new_code_block")
-
-            if start_line is None:
-                raise ValueError("REPLACE_LINES requires start_line.")
-            if end_line is None:
-                raise ValueError("REPLACE_LINES requires end_line.")
-            if new_code_block is None:
-                raise ValueError("REPLACE_LINES requires new_code_block.")
-            if start_line < 1 or end_line < 1:
-                raise ValueError("REPLACE_LINES requires start_line and end_line >= 1.")
-            if start_line > end_line:
-                raise ValueError("REPLACE_LINES requires start_line <= end_line.")
-        else:
-            # Web UI often sends default line fields for non-edit actions.
-            data["start_line"] = None
-            data["end_line"] = None
-            data["new_code_block"] = None
-
-        return data
+    start_line: Optional[int] = Field(
+        default=None,
+        description=(
+            "The inclusive start line number for REPLACE_LINES. You MUST use the exact "
+            "integer keys provided in the code_dict observation."
+        ),
+    )
+    end_line: Optional[int] = Field(
+        default=None,
+        description=(
+            "The inclusive end line number for REPLACE_LINES. You MUST use the exact "
+            "integer keys provided in the code_dict observation."
+        ),
+    )
+    new_code_block: Optional[str] = Field(
+        default=None,
+        description=(
+            "The exact replacement Python code. Must be properly indented to match the "
+            "surrounding code. Do not include markdown formatting or backticks."
+        ),
+    )
 
 
 class TestResult(BaseModel):
