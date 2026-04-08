@@ -2,7 +2,6 @@
 title: TraceFix-RL
 emoji: 🧑‍💻
 colorFrom: blue
-colorTo: indigo
 sdk: docker
 pinned: false
 app_port: 7860
@@ -109,12 +108,12 @@ Server endpoints:
 - `--easy`: run episode using easy-tier curriculum sampling.
 - `--medium`: run episode using medium-tier curriculum sampling.
 - `--hard`: run episode using hard-tier curriculum sampling.
-- `--debug`: print raw model response snippets for troubleshooting.
+- `--thought`: include model thought traces in internal prompt history.
 
 Example:
 
 ```bash
-python inference.py --medium --debug
+python inference.py --medium --thought
 ```
 
 The script also enforces a model-thinking/output cap:

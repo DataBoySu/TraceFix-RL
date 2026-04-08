@@ -47,8 +47,7 @@ BENCHMARK = os.getenv("BENCHMARK", "tracefix_rl")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99"))
 THINKING_TOKEN_LIMIT = int(os.getenv("THINKING_TOKEN_LIMIT", "512"))
-# Approximation used for hard truncation before sending to server.
-THINKING_CHAR_LIMIT = THINKING_TOKEN_LIMIT * 4
+MAX_PARSE_RETRIES = 3
 
 SYSTEM_PROMPT = (
     "You are controlling a Python debugging RL environment. "
@@ -100,7 +99,7 @@ def _extract_json(text: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-    return {"action_type": "RUN_TESTS"}
+    raise ValueError("Invalid JSON response.")
 
 
 def _build_observation_text(observation: Any) -> str:
@@ -116,31 +115,26 @@ def _build_observation_text(observation: Any) -> str:
 
 
 def _get_model_action(
-    client: OpenAI, observation: Any, history: list[str], debug: bool = False
-) -> dict[str, Any]:
+    client: OpenAI, observation: Any, history: list[str]
+) -> tuple[dict[str, Any], str]:
     obs_text = _build_observation_text(observation)
     user_prompt = (
         "Pick the single best next action and return only JSON.\n\n"
         f"{obs_text}\n\n"
         f"history:\n{chr(10).join(history[-5:]) if history else 'none'}"
     )
-    try:
-        completion = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.0,
-            max_tokens=THINKING_TOKEN_LIMIT,
-            stream=False,
-        )
-        response_text = (completion.choices[0].message.content or "").strip()
-        if debug:
-            print(f"[DEBUG] raw_model_response={response_text[:500]}", flush=True)
-        action = _extract_json(response_text)
-    except Exception:
-        action = {"action_type": "RUN_TESTS"}
+    completion = client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.0,
+        max_tokens=THINKING_TOKEN_LIMIT,
+        stream=False,
+    )
+    response_text = (completion.choices[0].message.content or "").strip()
+    action = _extract_json(response_text)
 
     if action.get("action_type") not in {
         "VIEW_CODE",
@@ -150,27 +144,20 @@ def _get_model_action(
         "RESET_TO_ORIGINAL",
         "SUBMIT",
     }:
-        action = {"action_type": "RUN_TESTS"}
+        raise ValueError("Invalid action_type in model response.")
 
-    return action
+    return action, response_text
 
 
 def _to_code_action(action_dict: dict[str, Any]) -> CodeAction:
-    thought = action_dict.get("thought")
-    if isinstance(thought, str):
-        thought = thought[:THINKING_CHAR_LIMIT]
-
     payload = {
-        "action_type": action_dict.get("action_type", "RUN_TESTS"),
-        "thought": thought,
+        "action_type": action_dict.get("action_type"),
+        "thought": action_dict.get("thought"),
         "start_line": action_dict.get("start_line"),
         "end_line": action_dict.get("end_line"),
         "new_code_block": action_dict.get("new_code_block"),
     }
-    try:
-        return CodeAction(**payload)
-    except Exception:
-        return CodeAction(action_type="RUN_TESTS")
+    return CodeAction(**payload)
 
 
 def _compute_score(step_result: Any, rewards: list[float]) -> float:
@@ -184,7 +171,7 @@ def _compute_score(step_result: Any, rewards: list[float]) -> float:
     return max(0.0, min(1.0, float(raw)))
 
 
-async def run(difficulty: Optional[str] = None, debug: bool = False) -> None:
+async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> None:
     client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
 
     env: Optional[TraceFixRLEnv] = None
@@ -214,8 +201,34 @@ async def run(difficulty: Optional[str] = None, debug: bool = False) -> None:
             if result.done:
                 break
 
-            action_dict = _get_model_action(client, result.observation, history, debug=debug)
-            action = _to_code_action(action_dict)
+            action: Optional[CodeAction] = None
+            model_response = ""
+
+            for attempt in range(1, MAX_PARSE_RETRIES + 1):
+                try:
+                    action_dict, model_response = _get_model_action(client, result.observation, history)
+                    action = _to_code_action(action_dict)
+                    if show_thought:
+                        history.append(f"thought={action.thought}")
+                    break
+                except Exception as exc:
+                    cause = str(exc).replace("\n", " ")
+                    history.append(
+                        (
+                            f"parse_failure attempt={attempt} cause={cause}. "
+                            "Error: Invalid JSON or schema. Return a complete valid JSON object "
+                            "with fields: thought, action_type, start_line, end_line, new_code_block."
+                        )
+                    )
+                    if model_response:
+                        history.append(f"raw_response={model_response[:500]}")
+
+            if action is None:
+                action = CodeAction(
+                    action_type="RUN_TESTS",
+                    thought="Fallback after repeated invalid JSON/schema responses.",
+                )
+
             result = await env.step(action)
 
             reward = float(result.reward or 0.0)
@@ -229,7 +242,7 @@ async def run(difficulty: Optional[str] = None, debug: bool = False) -> None:
 
             rewards.append(reward)
             steps_taken = step
-            history.append(f"step={step} action={action_str} reward={reward:.2f}")
+            history.append(f"step={step} action={action_str} reward={reward:.2f} error={error or 'null'}")
             log_step(step=step, action=action_str, reward=reward, done=done, error=error)
 
             if done:
@@ -243,10 +256,6 @@ async def run(difficulty: Optional[str] = None, debug: bool = False) -> None:
             log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
             started = True
         msg = str(exc).replace("\n", " ")
-        if steps_taken == 0:
-            log_step(step=1, action="RUN_TESTS", reward=0.0, done=False, error=msg)
-            steps_taken = 1
-            rewards.append(0.0)
         score = 0.0
         success = False
     finally:
@@ -264,7 +273,7 @@ if __name__ == "__main__":
     group.add_argument("--easy", action="store_true", help="Run on easy curriculum tier.")
     group.add_argument("--medium", action="store_true", help="Run on medium curriculum tier.")
     group.add_argument("--hard", action="store_true", help="Run on hard curriculum tier.")
-    parser.add_argument("--debug", action="store_true", help="Print debug model output snippets.")
+    parser.add_argument("--thought", action="store_true", help="Include model thought traces in internal history.")
     args = parser.parse_args()
 
     difficulty: Optional[str] = None
@@ -275,4 +284,4 @@ if __name__ == "__main__":
     elif args.hard:
         difficulty = "hard"
 
-    asyncio.run(run(difficulty=difficulty, debug=args.debug))
+    asyncio.run(run(difficulty=difficulty, show_thought=args.thought))

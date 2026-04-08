@@ -21,9 +21,9 @@ ActionType = Literal[
 class CodeAction(Action):
     """Structured action consumed by the environment."""
 
-    thought: Optional[str] = Field(
-        default=None,
-        description="Optional reasoning string for debugging/traceability.",
+    thought: str = Field(
+        ...,
+        description="Mandatory reasoning string before selecting an action.",
     )
     action_type: ActionType = Field(
         ...,
