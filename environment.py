@@ -1,45 +1,4 @@
-"""
-environment.py — Python Debugging Gym (Core RL Environment)
-=============================================================
-
-PRINCIPLE 1 — You Don't Design the Control Flow
-  The agent decides the sequence of actions. step() is a pure router:
-  it receives whatever action the agent chose (in whatever order),
-  processes it, and returns the new state. There is no forced sequence,
-  no "you must VIEW_CODE before RUN_TESTS" gate. The system prompt
-  explains what tools exist; the agent decides how to use them.
-
-PRINCIPLE 5 — Cost-Per-Turn Reward Logic
-  Each call to step() costs R_STEP_COST = -0.01. This makes the episode
-  a multi-turn budget problem: the agent is rewarded for solving quickly.
-  An agent that solves in 4 steps scores ~0.14 more than one that takes
-  18 steps to reach the same solution.
-
-PRINCIPLE 7 — The Prompt is Code
-  The string returned by reset() is the agent's complete operational
-  contract for the session. It states: the goal, the available actions
-  (with exact JSON examples), the reward structure, the current code,
-  and the expected termination condition. Ambiguity in this string
-  directly causes off-task behaviour.
-
-PRINCIPLE 10 — Layered Context Compaction
-  _build_observation() tracks `_last_edited_line` and passes it to
-  context.get_localized_context() to produce a focused ±10-line view
-  after each write action. This prevents the observation from inflating
-  the agent's context window on large files.
-
-Reward table (dense, non-sparse — every step emits a signal):
-  +1.00  SUBMIT and ALL tests pass     → episode solved
-  +0.10  RUN_TESTS called              → information-gathering rewarded
-  +0.05  Per test transitioning fail→pass on a RUN_TESTS or SUBMIT
-  -0.01  Every step taken              → efficiency pressure (Principle 5)
-  -0.10  Syntax error detected         → broken code penalised immediately
-  -0.10  UNDO_EDIT or RESET_TO_ORIGINAL → backtracking discouraged
-  -0.02  Invalid line range supplied   → hallucination deterrent
-  -0.20  SUBMIT with tests still failing
-
-Max episode length: 50 steps.
-"""
+"""Core TraceFix-RL environment implementation."""
 
 from __future__ import annotations
 
@@ -59,32 +18,17 @@ except ImportError:
     from tasks import ALL_TASKS, TASKS_BY_DIFFICULTY
 
 
-# ---------------------------------------------------------------------------
-# Reward constants
-# ---------------------------------------------------------------------------
-
 R_SUBMIT_ALL_PASS = +1.00
 R_SUBMIT_FAIL     = -0.20
 R_SYNTAX_ERROR    = -0.10
 R_RUN_TESTS       = +0.10
 R_PER_NEW_PASS    = +0.05
-R_STEP_COST       = -0.01   # PRINCIPLE 5 — every step has a cost
+R_STEP_COST       = -0.01
 R_INVALID_LINE    = -0.02
 R_DESTRUCTIVE_PENALTY = -0.20
-R_UNDO_RESET      = -0.10   # Mini-Git backtracking penalty
+R_UNDO_RESET      = -0.10
 
 MAX_STEPS: int = 50
-
-
-# ---------------------------------------------------------------------------
-# System Prompt  (PRINCIPLE 7 — The Prompt is Code)
-# ---------------------------------------------------------------------------
-# This string is the agent's entire operational contract.
-# It must be:
-#   • Self-contained (no assumed context from training data)
-#   • Precise (exact JSON examples, not vague descriptions)
-#   • Non-directive about sequence (Principle 1: agent chooses order)
-#   • Complete (goal, tools, rewards, termination — nothing omitted)
 
 _SYSTEM_PROMPT = """\
 ╔══════════════════════════════════════════════════════╗
@@ -176,24 +120,10 @@ CURRENT CODE  (this is the broken version — fix it)
 """
 
 
-# ---------------------------------------------------------------------------
-# Environment
-# ---------------------------------------------------------------------------
+class TraceFixRLGym:
+    """Gym-style environment with reset/step methods."""
 
-class PythonDebuggingGym:
-    """
-    Gymnasium-compatible RL environment for Python debugging.
-
-    PRINCIPLE 1: step() is a stateless router — the agent chooses the
-    sequence. No internal gates, no forced ordering between actions.
-
-    Interface
-    ---------
-    obs, system_prompt = env.reset()
-    obs, reward, done, info = env.step(action: CodeAction)
-    """
-
-    metadata = {"name": "PythonDebuggingGym-v1", "render_modes": []}
+    metadata = {"name": "TraceFixRL-v1", "render_modes": []}
 
     def __init__(
         self,
@@ -203,25 +133,21 @@ class PythonDebuggingGym:
         self._task_index = task_index
         self._rng = random.Random(seed)
 
-        # All mutable episode state lives here; reset() wipes every field.
         self._code_lines: List[str] = []
         self._task: Dict[str, Any] = {}
         self._step_count: int = 0
         self._prev_pass_count: int = 0
         self._last_test_results: List[TestResult] = []
         self._last_output: str = ""
-        self._last_edited_line: Optional[int] = None   # PRINCIPLE 10
+        self._last_edited_line: Optional[int] = None
         self._episode_id: str = ""
         self._done: bool = False
         self._cumulative_reward: float = 0.0
-        self._accumulated_step_costs: float = 0.0  # Hackathon compliance
-        # Mini-Git snapshot history (Phase 2)
-        self._original_code: List[str] = []          # pristine copy set at reset()
-        self._edit_history: List[List[str]] = []     # stack of pre-edit snapshots
-        # Curriculum learning — persists across episodes, incremented externally
+        self._accumulated_step_costs: float = 0.0
+        self._original_code: List[str] = []
+        self._edit_history: List[List[str]] = []
         self.training_step: int = 0
 
-    # ── Curriculum task sampler ──────────────────────────────────────────────
 
     def _sample_task(self, task_override=None) -> Dict[str, Any]:
         """
@@ -241,13 +167,11 @@ class PythonDebuggingGym:
         if isinstance(task_override, dict):
             return task_override
 
-        # Judge-safe default: no training_step set → random from all tasks
         if self.training_step == 0:
             if not ALL_TASKS:
                 raise RuntimeError("ALL_TASKS is empty — check tasks.py.")
             return self._rng.choice(ALL_TASKS)
 
-        # Curriculum mode (trainer increments training_step between episodes)
         if self.training_step < 1000:
             bucket = "easy"
         elif self.training_step < 5000:
@@ -257,7 +181,6 @@ class PythonDebuggingGym:
 
         pool = TASKS_BY_DIFFICULTY.get(bucket, [])
         if not pool:
-            # Fallback: any non-empty bucket rather than crashing
             for b in ("easy", "medium", "hard"):
                 pool = TASKS_BY_DIFFICULTY.get(b, [])
                 if pool:
@@ -267,7 +190,6 @@ class PythonDebuggingGym:
 
         return self._rng.choice(pool)
 
-    # ── reset() ─────────────────────────────────────────────────────────────
 
     def reset(
         self, *, task_index: Optional[int] = None
@@ -281,7 +203,6 @@ class PythonDebuggingGym:
         """
         self._task = self._sample_task(task_index)
 
-        # ── Complete state wipe ──────────────────────────────────────────
         self._code_lines       = list(self._task["code"])   # deep copy — no alias
         self._step_count       = 0
         self._prev_pass_count  = 0
@@ -292,16 +213,13 @@ class PythonDebuggingGym:
         self._done             = False
         self._cumulative_reward = 0.0
         self._accumulated_step_costs = 0.0
-        # Mini-Git: seed pristine snapshot and clear history
         self._original_code = list(self._task["code"])  # separate copy from _code_lines
         self._edit_history  = []
-        # Anti-Loop history
         self._last_action: Optional[str] = None
         self._consecutive_count: int = 0
 
         obs = self._build_observation(reward=0.0)
 
-        # PRINCIPLE 7: build the operational contract string
         system_prompt = _SYSTEM_PROMPT.format(
             task_name   = self._task["name"],
             difficulty  = self._task.get("difficulty", "unknown"),
@@ -312,7 +230,6 @@ class PythonDebuggingGym:
 
         return obs, system_prompt
 
-    # ── step() ──────────────────────────────────────────────────────────────
 
     def step(
         self, action: CodeAction
@@ -337,7 +254,6 @@ class PythonDebuggingGym:
         reward = R_STEP_COST   # PRINCIPLE 5: cost-per-turn baseline
         self._accumulated_step_costs += abs(R_STEP_COST)  # Hackathon compliance
 
-        # ── Repetition Penalty (Anti-Loop) ───────────────────────────────
         if action.action_type == self._last_action:
             self._consecutive_count += 1
             reward += -0.05 * self._consecutive_count
@@ -345,7 +261,6 @@ class PythonDebuggingGym:
             self._consecutive_count = 0
         self._last_action = action.action_type
 
-        # ── Route (PRINCIPLE 1: no forced sequence) ──────────────────────
         atype = action.action_type
 
         if   atype == "VIEW_CODE":
@@ -369,12 +284,8 @@ class PythonDebuggingGym:
             reward += self._act_submit()
             self._done = True
 
-        # ── Max-steps termination ────────────────────────────────────────
         if self._step_count >= MAX_STEPS and not self._done:
             self._done = True
-            # Deterministic clamp — never trust the LLM to call SUBMIT.
-            # Evaluate the current code and produce a valid [0.0, 1.0] score
-            # regardless of how the episode ended.
             _, results, syntax_err = run_code_with_tests(
                 source=self._source(),
                 test_callables=self._task["tests"],
@@ -398,15 +309,10 @@ class PythonDebuggingGym:
             "step":              self._step_count,
         }
         if self._done:
-            # PRINCIPLE: Ensure Hackathon score leak doesn't occur. It must be strictly [0.0, 1.0].
-            # During SUBMIT, reward might be negative if _act_submit returned 0.0 added to -0.01.
             info["final_score"] = max(0.0, min(1.0, round(reward, 4)))
 
         return obs, round(reward, 4), self._done, info
 
-    # ── Action handlers ─────────────────────────────────────────────────────
-    # Each returns the delta reward (R_STEP_COST already applied by step()).
-    # Handlers update self._last_output and self._last_edited_line as needed.
 
     def _act_view_code(self) -> float:
         self._last_output = (
@@ -416,7 +322,6 @@ class PythonDebuggingGym:
                 for i, line in enumerate(self._code_lines)
             )
         )
-        # VIEW_CODE does not change the code — localized_context stays where it was
         return 0.0
 
     def _act_run_tests(self) -> float:
@@ -447,12 +352,10 @@ class PythonDebuggingGym:
         if new_code_block is None:
             new_code_block = ""
 
-        # ── Guard: Destructive Action (Anti-Deletion) ─────────────────────
         if len(new_code_block) == 0 and (end_line - start_line) > 5:
             self._last_output = "Error: Cannot delete more than 5 lines at once."
             return R_DESTRUCTIVE_PENALTY
 
-        # ── Guard: inverted range ─────────────────────────────────────────
         if start_line > end_line:
             self._last_output = (
                 f"Error: start_line ({start_line}) > end_line ({end_line}). "
@@ -460,7 +363,6 @@ class PythonDebuggingGym:
             )
             return R_INVALID_LINE
 
-        # ── Guard: out-of-bounds ──────────────────────────────────────────
         if start_line < 1 or start_line > n:
             self._last_output = (
                 f"Error: start_line {start_line} is out of range [1, {n}]. "
@@ -474,19 +376,14 @@ class PythonDebuggingGym:
             )
             return R_INVALID_LINE
 
-        # ── Slice assignment (PRINCIPLE 1: pure data transformation) ──────
         start_idx = start_line - 1   # convert to 0-indexed
         end_idx   = end_line         # exclusive upper bound for Python slice
 
-        # ── Mini-Git: snapshot BEFORE mutating (Phase 2) ─────────────────
         self._edit_history.append(list(self._code_lines))
 
         new_lines = new_code_block.split("\n")
         self._code_lines[start_idx:end_idx] = new_lines
 
-        # ── Anchor context at END of new block (PRINCIPLE 10) ─────────────
-        # If the agent replaces lines 5–10 with 20 new lines, the anchor
-        # settles at start_line + len(new_lines) - 1, clamped to file length.
         new_end = start_line + len(new_lines) - 1
         self._last_edited_line = min(new_end, len(self._code_lines))
 
@@ -514,9 +411,6 @@ class PythonDebuggingGym:
         if syntax_err:
             self._last_output += "\n❌ SUBMIT rejected — syntax error in current code."
 
-        # ── Hackathon compliance: final score ∈ [0.0, 1.0] ───────────────
-        # raw = (tests_passed / total) - accumulated_step_costs
-        # Then clamped so the grader always receives a value in spec.
         proportion  = passes / total if total > 0 else 0.0
         raw_score   = proportion - self._accumulated_step_costs
         final_score = max(0.0, min(1.0, raw_score))
@@ -559,7 +453,6 @@ class PythonDebuggingGym:
                 "Call VIEW_CODE to inspect the restored file."
             )
 
-        # PRINCIPLE 10 desync fix: anchor is stale after rollback — wipe it.
         self._last_edited_line = None
         return R_UNDO_RESET
 
@@ -580,11 +473,9 @@ class PythonDebuggingGym:
             "Call VIEW_CODE to inspect the file."
         )
 
-        # PRINCIPLE 10 desync fix: context anchor is meaningless after full reset.
         self._last_edited_line = None
         return R_UNDO_RESET
 
-    # ── Helpers ─────────────────────────────────────────────────────────────
 
     def _source(self) -> str:
         return "\n".join(self._code_lines)
@@ -592,7 +483,6 @@ class PythonDebuggingGym:
     def _build_observation(self, reward: float) -> CodeObservation:
         syntax_valid, _ = check_syntax(self._source())
 
-        # PRINCIPLE 10: localized context — only ±10 lines around last edit
         localized = get_localized_context(self._code_lines, self._last_edited_line)
 
         return CodeObservation(

@@ -1,4 +1,4 @@
-"""Pydantic schema layer for SWE-Gym - Software Engineer Gym."""
+"""Pydantic schema layer for TraceFix-RL."""
 
 from __future__ import annotations
 

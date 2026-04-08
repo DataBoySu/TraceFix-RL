@@ -1,4 +1,4 @@
-# CLAUDE.md — Python Debugging Gym (RL_ENV)
+# CLAUDE.md — TraceFix-RL
 
 Codebase knowledge for AI assistants. Read before making changes.
 
@@ -259,7 +259,7 @@ Config from `os.getenv`:
 
 **Exact stdout log format (regex-parsed by validation judge):**
 ```
-[START] task=<task_name> env=PythonDebuggingGym model=<model_name>
+[START] task=<task_name> env=TraceFixRL model=<model_name>
 [STEP] step=<n> action=<action_type> reward=<r.rr> done=<true|false> error=<msg|null>
 [END] success=<true|false> steps=<n> score=<s.sss> rewards=<r1,r2,...,rn>
 ```

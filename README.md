@@ -1,5 +1,5 @@
 ---
-title: SWE-Gym - Software Engineer Gym
+title: TraceFix-RL
 emoji: 🧑‍💻
 colorFrom: blue
 colorTo: cyan
@@ -13,11 +13,13 @@ tags:
   - software-engineering
 ---
 
-# SWE-Gym - Software Engineer Gym
+# TraceFix-RL
 
-SWE-Gym is an OpenEnv-compatible RL environment where an agent must debug broken
-Python code by iteratively inspecting source, running tests, editing lines, and
-submitting once all tests pass.
+TraceFix-RL is an OpenEnv-compatible environment designed to teach agent behavior
+that looks like real software engineering work. Instead of one-shot answers,
+the agent must inspect code, form a hypothesis, run tests, patch the code,
+verify outcomes, and only then submit. The loop rewards disciplined debugging
+and penalizes random edits, forcing the model to learn an engineering workflow.
 
 ## Core Design
 
@@ -28,6 +30,40 @@ submitting once all tests pass.
 `RUN_TESTS` bonus, per-test progress bonus, step-cost penalty, invalid-edit penalties, and final clamped score in `[0, 1]`.
 - Curriculum-ready task sampling:
 easy/medium/hard buckets with safe random fallback for evaluator runs.
+
+## State Machine Training Pattern
+
+The environment prompt in `environment.py` encodes a fixed operating pattern
+the agent is expected to follow:
+
+1. ORIENT: inspect code (`VIEW_CODE`)
+2. DIAGNOSE: run tests and read failures (`RUN_TESTS`)
+3. FIX: patch one region (`REPLACE_LINES`)
+4. VERIFY: rerun tests (`RUN_TESTS`)
+5. REPEAT: continue until all failures are resolved
+6. SUBMIT: finalize only after tests pass
+
+This structure is intentional: the environment trains planning, controlled
+editing, and verification behavior, not just raw code generation.
+
+## Task Tiers And Test Structure
+
+Tasks are organized in `tasks.py` into three tiers.
+
+- Easy: 4 tasks, each with 4 unit tests.
+  Focus: basic operators, indexing, and simple string/array logic.
+- Medium: 6 tasks, each with 4 unit tests.
+  Focus: recursive behavior, branching correctness, and text normalization edge cases.
+- Hard: 6 tasks, each with 3-4 unit tests.
+  Focus: data-structure invariants, eviction/promotion logic, bracket mapping, and interval merging edge behavior.
+
+Every task follows the same schema:
+- `name`, `description`, `difficulty`, `bug_type`
+- `code`: buggy implementation (line list)
+- `solution`: reference implementation
+- `tests`: callable assertions executed in the sandbox
+
+This gives consistent training signals while scaling complexity across tiers.
 
 ## Environment Files
 

@@ -9,9 +9,9 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openenv-swe-gym"
+name = "openenv-tracefix-rl"
 version = "0.1.0"
-description = "SWE-Gym - Software Engineer Gym environment for OpenEnv"
+description = "TraceFix-RL environment for OpenEnv"
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
@@ -38,10 +38,10 @@ dev = [
 
 [project.scripts]
 # Server entry point - enables running via: uv run --project . server
-# or: python -m swe_gym.server.app
-server = "swe_gym.server.app:main"
+# or: python -m tracefix_rl.server.app
+server = "tracefix_rl.server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["swe_gym", "swe_gym.server"]
-package-dir = { "swe_gym" = ".", "swe_gym.server" = "server" }
+packages = ["tracefix_rl", "tracefix_rl.server"]
+package-dir = { "tracefix_rl" = ".", "tracefix_rl.server" = "server" }

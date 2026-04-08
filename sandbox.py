@@ -44,17 +44,11 @@ except ImportError:
     from models import TestResult
 
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 EXEC_TIMEOUT_SECONDS: int = 5    # Hard wall-clock kill limit (Principle 8)
 MAX_OUTPUT_CHARS: int = 1_000    # Tail-truncate limit (Principle 9)
 
 
-# ---------------------------------------------------------------------------
-# Restricted builtins (Principle 8)
-# ---------------------------------------------------------------------------
 
 def _make_safe_stub(name: str) -> Callable:
     """Return a callable that raises RuntimeError — used to block dangerous builtins."""
@@ -68,26 +62,19 @@ def _make_safe_stub(name: str) -> Callable:
     return _stub
 
 
-# Whitelist: safe builtins the agent's code is allowed to use.
-# Everything not in this dict is blocked.
 _SAFE_BUILTINS: Dict[str, Any] = {
-    # Type constructors
     "int": int, "float": float, "str": str, "bool": bool,
     "list": list, "dict": dict, "set": set, "tuple": tuple,
     "bytes": bytes, "bytearray": bytearray, "frozenset": frozenset,
     "complex": complex,
-    # Inspection / iteration
     "len": len, "range": range, "enumerate": enumerate, "zip": zip,
     "map": map, "filter": filter, "reversed": reversed, "sorted": sorted,
     "iter": iter, "next": next, "sum": sum, "min": min, "max": max,
     "abs": abs, "round": round, "divmod": divmod, "pow": pow,
-    # Introspection
     "isinstance": isinstance, "issubclass": issubclass, "type": type,
     "hasattr": hasattr, "getattr": getattr, "setattr": setattr,
     "callable": callable, "repr": repr, "hash": hash, "id": id,
-    # I/O (stdout only — stderr is captured separately)
     "print": print,
-    # Exceptions & control
     "Exception": Exception, "ValueError": ValueError, "TypeError": TypeError,
     "KeyError": KeyError, "IndexError": IndexError, "AttributeError": AttributeError,
     "StopIteration": StopIteration, "RuntimeError": RuntimeError,
@@ -96,13 +83,11 @@ _SAFE_BUILTINS: Dict[str, Any] = {
     "RecursionError": RecursionError, "MemoryError": MemoryError,
     "KeyboardInterrupt": KeyboardInterrupt,
     "BaseException": BaseException,
-    # Functional
     "any": any, "all": all,
     "chr": chr, "ord": ord, "hex": hex, "oct": oct, "bin": bin,
     "format": format,
     "object": object, "property": property, "staticmethod": staticmethod,
     "classmethod": classmethod, "super": super,
-    # Blocked with stubs (Principle 8)
     "open":        _make_safe_stub("open"),
     "__import__":  _make_safe_stub("__import__"),
     "eval":        _make_safe_stub("eval"),
@@ -119,9 +104,6 @@ _SAFE_BUILTINS: Dict[str, Any] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Output truncation (Principle 9)
-# ---------------------------------------------------------------------------
 
 def _tail_truncate(s: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     """
@@ -138,9 +120,6 @@ def _tail_truncate(s: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     return f"[...truncated {dropped} chars...]\n" + s[-limit:]
 
 
-# ---------------------------------------------------------------------------
-# Worker (runs in isolated child process)
-# ---------------------------------------------------------------------------
 
 def _worker(
     source: str,
@@ -162,41 +141,29 @@ def _worker(
     fn_name = "<unknown>"
 
     try:
-        # ── Phase 1: Syntax check ─────────────────────────────────────────
-        # Compile before exec() so SyntaxError is caught cleanly.
         try:
             code_obj = compile(source, "<agent_code>", "exec")
         except SyntaxError as exc:
             had_syntax_error = True
-            # Restore streams before writing the error
             sys.stdout, sys.stderr = old_stdout, old_stderr
             err = f"SyntaxError at line {exc.lineno}: {exc.msg}\n  >> {exc.text or ''}"
             result_queue.put((_tail_truncate(err), [], True))
             return
 
-        # ── Phase 2: Execute agent code into a sandboxed namespace ───────
-        # Use full __builtins__ to prevent __build_class__ errors for class-based tasks.
         namespace: Dict[str, Any] = {"__builtins__": __builtins__}
         try:
             exec(code_obj, namespace)  # noqa: S102
         except Exception:  # noqa: BLE001
-            # PRINCIPLE 2: execution crash is data, not a crash
             tb = traceback.format_exc()
             sys.stdout, sys.stderr = old_stdout, old_stderr
             result_queue.put((_tail_truncate(buf.getvalue() + "\n" + tb), [], False))
             return
 
-        # ── Phase 3: Run each test function ──────────────────────────────
-        # PRINCIPLE 2: each test is isolated inside its own try-except so a
-        # crash in test N does not prevent tests N+1..M from running.
         for test_src in test_sources:
             fn_name = "<unknown>"
             try:
-                # Inject the test function into the existing namespace so it
-                # can access the agent's defined symbols.
                 exec(test_src, namespace)  # noqa: S102
 
-                # Extract the last `def` name from the test source.
                 fn_name = [
                     ln.split("(")[0].replace("def ", "").strip()
                     for ln in test_src.splitlines()
@@ -207,7 +174,6 @@ def _worker(
                 test_results.append({"test_name": fn_name, "passed": True})
 
             except AssertionError as exc:
-                # PRINCIPLE 2: assertion failure is structured data
                 test_results.append({
                     "test_name": fn_name,
                     "passed": False,
@@ -216,7 +182,6 @@ def _worker(
                     ),
                 })
             except Exception:  # noqa: BLE001
-                # PRINCIPLE 2: all other exceptions also become structured data
                 test_results.append({
                     "test_name": fn_name,
                     "passed": False,
@@ -224,7 +189,6 @@ def _worker(
                 })
 
     except Exception:  # noqa: BLE001
-        # Catch-all for any unexpected failure in the harness itself
         traceback.print_exc(file=buf)
     finally:
         sys.stdout, sys.stderr = old_stdout, old_stderr
@@ -233,9 +197,6 @@ def _worker(
     result_queue.put((captured, test_results, had_syntax_error))
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
 
 def check_syntax(source: str) -> Tuple[bool, str]:
     """
@@ -271,7 +232,6 @@ def run_code_with_tests(
     -------
     (output_str, test_results, had_syntax_error)
     """
-    # Serialise callables → source strings (required for pickling across processes)
     test_sources = [
         textwrap.dedent(inspect.getsource(fn))
         for fn in test_callables
@@ -286,7 +246,6 @@ def run_code_with_tests(
     proc.start()
     proc.join(timeout)
 
-    # PRINCIPLE 8 — hard kill (SIGTERM first, SIGKILL if still alive)
     if proc.is_alive():
         proc.terminate()
         proc.join(2)   # Give it 2s to handle SIGTERM gracefully
