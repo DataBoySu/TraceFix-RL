@@ -4,7 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""My Env Environment Client."""
+"""Client for the Python Debugging Gym OpenEnv environment."""
 
 from typing import Dict
 
@@ -12,11 +12,11 @@ from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
 
-from .models import MyAction, MyObservation
+from .models import CodeAction, CodeObservation, TestResult
 
 
 class MyEnv(
-    EnvClient[MyAction, MyObservation, State]
+    EnvClient[CodeAction, CodeObservation, State]
 ):
     """
     Client for the My Env Environment.
@@ -44,7 +44,7 @@ class MyEnv(
         ...     client.close()
     """
 
-    def _step_payload(self, action: MyAction) -> Dict:
+    def _step_payload(self, action: CodeAction) -> Dict:
         """
         Convert MyAction to JSON payload for step message.
 
@@ -54,13 +54,11 @@ class MyEnv(
         Returns:
             Dictionary representation suitable for JSON encoding
         """
-        return {
-            "message": action.message,
-        }
+        return action.model_dump(exclude_none=True)
 
-    def _parse_result(self, payload: Dict) -> StepResult[MyObservation]:
+    def _parse_result(self, payload: Dict) -> StepResult[CodeObservation]:
         """
-        Parse server response into StepResult[MyObservation].
+        Parse server response into StepResult[CodeObservation].
 
         Args:
             payload: JSON response data from server
@@ -69,9 +67,18 @@ class MyEnv(
             StepResult with MyObservation
         """
         obs_data = payload.get("observation", {})
-        observation = MyObservation(
-            echoed_message=obs_data.get("echoed_message", ""),
-            message_length=obs_data.get("message_length", 0),
+        observation = CodeObservation(
+            code_lines=obs_data.get("code_lines", []),
+            localized_context=obs_data.get("localized_context", ""),
+            last_execution_output=obs_data.get("last_execution_output", ""),
+            syntax_error=obs_data.get("syntax_error", False),
+            test_results=[
+                TestResult(**item) for item in obs_data.get("test_results", [])
+            ],
+            step_count=obs_data.get("step_count", 0),
+            steps_remaining=obs_data.get("steps_remaining", 0),
+            reward_last_step=obs_data.get("reward_last_step", 0.0),
+            info=obs_data.get("info", {}),
             done=payload.get("done", False),
             reward=payload.get("reward"),
             metadata=obs_data.get("metadata", {}),

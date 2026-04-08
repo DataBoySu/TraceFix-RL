@@ -9,9 +9,9 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openenv-my_env"
+name = "openenv-python-debugging-gym"
 version = "0.1.0"
-description = "My Env environment for OpenEnv"
+description = "Python Debugging Gym environment for OpenEnv"
 requires-python = ">=3.10"
 dependencies = [
     # Core OpenEnv runtime (provides FastAPI server + HTTP client types)
@@ -26,6 +26,8 @@ dependencies = [
     # "gymnasium>=0.29.0",
     # "openspiel>=1.0.0",
     # "smolagents>=1.22.0,<2",
+    "openai>=1.30.0",
+    "websockets>=12.0",
 ]
 
 [project.optional-dependencies]
