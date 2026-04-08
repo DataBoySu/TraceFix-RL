@@ -300,7 +300,10 @@ def _compute_score(step_result: Any, rewards: list[float]) -> float:
 
 
 async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client = OpenAI(
+        base_url=API_BASE_URL,
+        api_key=HF_TOKEN,
+    )
 
     env: Optional[TraceFixRLEnv] = None
     rewards: list[float] = []
