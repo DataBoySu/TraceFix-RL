@@ -46,6 +46,8 @@ ENV PYTHONPATH="/app/env:$PYTHONPATH"
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:7860/health || exit 1
 
+EXPOSE 7860
+
 USER appuser
 
 CMD ["sh", "-c", "cd /app/env && python app.py"]

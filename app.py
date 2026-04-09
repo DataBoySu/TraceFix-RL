@@ -486,7 +486,7 @@ def run_agent(
     yield code_view, _terminal_html(terminal_lines), status_html, score_value, rewards_md
 
 
-with gr.Blocks(theme=gr.themes.Monochrome(), css=CSS, title="TraceFix-RL Mission Control") as demo:
+with gr.Blocks(title="TraceFix-RL Mission Control") as demo:
     gr.HTML(
         """
         <div id='header-wrap'>
@@ -579,4 +579,4 @@ with gr.Blocks(theme=gr.themes.Monochrome(), css=CSS, title="TraceFix-RL Mission
 
 if __name__ == "__main__":
     _start_backend_server()
-    demo.queue().launch(server_name=GRADIO_HOST, server_port=GRADIO_PORT)
+    demo.queue().launch(server_name=GRADIO_HOST, server_port=GRADIO_PORT, theme=gr.themes.Monochrome(), css=CSS)
