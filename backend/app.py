@@ -30,7 +30,13 @@ app = create_app(
     max_concurrent_envs=1,
 )
 
-app = gr.mount_gradio_app(app, demo, path="/")
+from fastapi.responses import RedirectResponse
+
+@app.get("/", include_in_schema=False)
+async def root_redirect():
+    return RedirectResponse(url="/web/")
+
+app = gr.mount_gradio_app(app, demo, path="/web")
 
 
 def main() -> None:
