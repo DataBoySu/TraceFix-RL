@@ -18,10 +18,15 @@ import gradio as gr
 try:
     from tasks import tasks
     ALL_TASKS = tasks.ALL_TASKS
+    TASKS_BY_DIFFICULTY = tasks.TASKS_BY_DIFFICULTY
 except Exception:
     tasks = None
     ALL_TASKS = []
+    TASKS_BY_DIFFICULTY = {"easy": [], "medium": [], "hard": []}
 
+EASY_CHOICES = [t.get("name") for t in TASKS_BY_DIFFICULTY.get("easy", []) if t.get("name")]
+MEDIUM_CHOICES = [t.get("name") for t in TASKS_BY_DIFFICULTY.get("medium", []) if t.get("name")]
+HARD_CHOICES = [t.get("name") for t in TASKS_BY_DIFFICULTY.get("hard", []) if t.get("name")]
 
 ROOT_DIR = Path(__file__).resolve().parent
 INFERENCE_PATH = ROOT_DIR / "inference.py"
@@ -46,54 +51,53 @@ TASK_MAP: dict[str, dict[str, Any]] = {
     if isinstance(task, dict) and task.get("name")
 }
 
-
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;600;800&display=swap');
 
 :root {
-  --bg-top: #0f1115;
-  --bg-bottom: #1a1e27;
-  --panel: rgba(255, 255, 255, 0.04);
-  --panel-border: rgba(255, 255, 255, 0.12);
-  --text-main: #e7e9ef;
-  --text-dim: #aab1c2;
-  --accent: #91c6ff;
-  --ok: #6ce7b5;
-  --warn: #f9d78b;
-  --err: #ff9b9b;
+  --bg-top: #0a0a0a;
+  --bg-bottom: #111111;
+  --panel: #0a0a0a;
+  --panel-border: rgba(255, 255, 255, 0.15);
+  --text-main: #f5f5f5;
+  --text-dim: #999;
+  --accent: #E60012;
 }
 
 .gradio-container {
   font-family: 'Inter', sans-serif !important;
-  background: radial-gradient(circle at 20% 0%, #202636 0%, transparent 40%),
-              linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+  background: var(--bg-top);
   color: var(--text-main);
 }
 
 #header-wrap {
-  margin-bottom: 10px;
-  border: 1px solid var(--panel-border);
-  background: var(--panel);
-  border-radius: 16px;
+  margin-bottom: 5px;
+  border: 1px solid var(--accent);
+  background: #000;
+  border-radius: 0px;
   padding: 16px 20px;
+  text-transform: uppercase;
 }
 
 #header-wrap h1 {
   margin: 0;
-  letter-spacing: 0.2px;
-  font-weight: 600;
-  color: #f5f7fb;
+  letter-spacing: 2px;
+  font-weight: 900;
+  color: #fff;
+  font-style: italic;
+  text-shadow: 2px 2px #E60012;
 }
 
 #header-wrap p {
   margin: 6px 0 0;
-  color: var(--text-dim);
+  color: #fff;
+  font-weight: 500;
 }
 
 .panel {
   border: 1px solid var(--panel-border);
-  border-radius: 16px;
-  background: var(--panel);
+  border-radius: 0px !important;
+  background: var(--panel) !important;
   overflow: hidden;
 }
 
@@ -101,9 +105,28 @@ CSS = """
   padding: 10px 14px;
   border-bottom: 1px solid var(--panel-border);
   color: var(--text-dim);
-  font-size: 12px;
-  letter-spacing: 0.09em;
+  font-size: 14px;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
+  font-weight: bold;
+}
+
+#execute-btn {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-radius: 0px !important;
+  font-weight: 900 !important;
+  font-size: 18px !important;
+  text-transform: uppercase !important;
+  border: none !important;
+  transition: all 0.2s ease !important;
+  height: 60px !important;
+}
+
+#execute-btn:hover {
+  background: #fff !important;
+  color: var(--accent) !important;
+  box-shadow: 0 0 15px var(--accent) !important;
 }
 
 .code-panel * {
@@ -111,13 +134,14 @@ CSS = """
 }
 
 .terminal-wrap {
-  height: 620px;
+  height: 600px;
   overflow-y: auto;
   padding: 12px;
   font-family: 'JetBrains Mono', monospace;
-  font-size: 12px;
-  line-height: 1.55;
-  background: #0c0f16;
+  font-size: 13px;
+  line-height: 1.6;
+  background: #050505;
+  border: 2px solid var(--accent);
 }
 
 .term-line {
@@ -125,32 +149,32 @@ CSS = """
   word-break: break-word;
 }
 
-.term-step { color: var(--accent); }
-.term-start { color: #c8d7ff; }
-.term-end { color: var(--ok); font-weight: 600; }
-.term-thought { color: #b9c7ff; }
-.term-error { color: var(--err); }
-.term-muted { color: var(--text-dim); }
+/* Cyberpunk Log Colors */
+.c-start { color: #E60012; font-weight: bold; }
+.c-end { color: #E60012; font-weight: bold; }
+.c-step { color: #39ff14; font-weight: bold; }
+.c-thought { color: #5b7a96; font-style: italic; }
+.c-error { color: #E60012; }
+.c-muted { color: var(--text-dim); }
 
 .metric {
   border: 1px solid var(--panel-border);
-  background: var(--panel);
-  border-radius: 14px;
+  background: #000;
+  border-radius: 0px;
   padding: 12px;
+  border-left: 4px solid var(--accent);
 }
 """
-
 
 def _code_from_task_name(task_name: str) -> str:
     task = TASK_MAP.get((task_name or "").strip())
     if not task:
         return (
             "# Waiting for mission start...\n"
-            "# Tip: Set TASK_NAME to one of the known tasks from tasks.py\n"
+            "# Tip: Select a target from the Mission Board\n"
             "# so the buggy sandbox code can be previewed before launch."
         )
     return "\n".join(task.get("code", []))
-
 
 def _normalize_base_url(base_url: str) -> str:
     candidate = (base_url or "").strip()
@@ -159,7 +183,6 @@ def _normalize_base_url(base_url: str) -> str:
     if not candidate.startswith(("http://", "https://")):
         candidate = f"http://{candidate}"
     return candidate.rstrip("/")
-
 
 def _code_from_openenv(task_name: str, env_base_url: str) -> str | None:
     normalized_url = _normalize_base_url(env_base_url)
@@ -200,7 +223,6 @@ def _code_from_openenv(task_name: str, env_base_url: str) -> str | None:
                     return task_code
     return None
 
-
 def load_code(task_name: str, env_base_url: str) -> str:
     local_code = _code_from_task_name(task_name)
     if "Waiting for mission start" not in local_code:
@@ -215,20 +237,18 @@ def load_code(task_name: str, env_base_url: str) -> str:
         "# Verify Task / Bug Selection and confirm OpenEnv API is reachable."
     )
 
-
 def _solution_from_task_name(task_name: str) -> str | None:
     task = TASK_MAP.get((task_name or "").strip())
     if not task:
         return None
     return "\n".join(task.get("solution", []))
 
-
 def _terminal_html(lines: list[tuple[str, str]]) -> str:
     rendered: list[str] = []
     for css_class, text in lines:
         safe = html.escape(text)
         rendered.append(f"<div class='term-line {css_class}'>{safe}</div>")
-    content = "\n".join(rendered) if rendered else "<div class='term-line term-muted'>Idle. Configure mission variables and press Run Agent.</div>"
+    content = "\n".join(rendered) if rendered else "<div class='term-line c-muted'>Idle. Configure mission variables and press EXECUTE TRACEFIX.</div>"
     return (
         "<div id='terminal' class='terminal-wrap'>"
         f"{content}"
@@ -238,7 +258,6 @@ def _terminal_html(lines: list[tuple[str, str]]) -> str:
         "</script>"
     )
 
-
 def _metric_block(state: str, details: str) -> str:
     return (
         "<div class='metric'>"
@@ -247,6 +266,13 @@ def _metric_block(state: str, details: str) -> str:
         "</div>"
     )
 
+def _update_hud_badge(task_name: str, difficulty: str) -> str:
+    if not task_name:
+        return "<div style='padding: 10px; color: var(--text-dim); border: 1px dashed var(--panel-border); text-align: center;'>WAITING FOR TARGET SELECTION...</div>"
+    color = "#39ff14" if difficulty == "Easy" else ("#f9d78b" if difficulty == "Medium" else "#E60012")
+    return f"""<div style='border: 2px solid {color}; padding: 12px; background: rgba(0,0,0,0.5); color: {color}; font-weight: 900; font-size: 16px; text-transform: uppercase; text-align: center; letter-spacing: 1.5px;'>
+        >> TARGET ACQUIRED: {html.escape(task_name)} | THREAT LEVEL: {difficulty} <<
+    </div>"""
 
 def _reader_thread(stream: Any, source: str, out_q: queue.Queue[tuple[str, str | None]]) -> None:
     try:
@@ -258,7 +284,6 @@ def _reader_thread(stream: Any, source: str, out_q: queue.Queue[tuple[str, str |
         except Exception:
             pass
         out_q.put((source, None))
-
 
 def _build_env(
     hf_token: str,
@@ -291,38 +316,44 @@ def _build_env(
             env.pop(key, None)
     return env
 
+def get_active_task(easy, medium, hard):
+    return (easy or medium or hard or "").strip()
 
-def _reset_run_state(task_name: str) -> tuple[str, str, str, float, str]:
+def _reset_run_state(easy, medium, hard):
+    task_name = get_active_task(easy, medium, hard)
     return (
         _code_from_task_name(task_name),
         _terminal_html([]),
         _metric_block("Mission Ready", "Awaiting [START] from inference subprocess..."),
         0.0,
-        "`Rewards:` pending",
+        "`Rewards:` pending"
     )
 
-
 def run_agent(
+    easy_radio: str,
+    medium_radio: str,
+    hard_radio: str,
     hf_token: str,
     api_base_url: str,
     model_name: str,
     env_base_url: str,
-    task_name: str,
     benchmark: str,
     max_steps: int,
     success_score_threshold: float,
     local_image_name: str,
     difficulty: str,
     show_thought: bool,
-) -> Generator[tuple[str, str, str, float, str], None, None]:
+) -> Generator[tuple[str, str, str, float, str, dict], None, None]:
+    
+    task_name = get_active_task(easy_radio, medium_radio, hard_radio)
     code_view = _code_from_task_name(task_name)
     terminal_lines: list[tuple[str, str]] = []
-    terminal_lines.append(("term-muted", "Boot sequence initialized."))
+    terminal_lines.append(("c-muted", "Boot sequence initialized... infiltrating target."))
 
-    status_html = _metric_block("Mission Ready", "Launching inference subprocess...")
+    status_html = _metric_block("Mission Infiltration", "Launching inference subprocess...")
     score_value = 0.0
     rewards_md = "`Rewards:` pending"
-    yield code_view, _terminal_html(terminal_lines), status_html, score_value, rewards_md
+    yield code_view, _terminal_html(terminal_lines), status_html, score_value, rewards_md, gr.update(value="INFILTRATING...", interactive=False)
 
     cmd = [sys.executable, str(INFERENCE_PATH)]
     if difficulty in {"easy", "medium", "hard"}:
@@ -360,7 +391,7 @@ def run_agent(
 
     ended_streams: set[str] = set()
     thought_mode = False
-    active_task_name = (task_name or "").strip()
+    active_task_name = task_name
     final_steps = 0
 
     while True:
@@ -380,15 +411,25 @@ def run_agent(
         if source == "stderr":
             if line.strip() == "[THOUGHT]":
                 thought_mode = True
-                terminal_lines.append(("term-thought", "[THOUGHT]"))
+                if show_thought:
+                    terminal_lines.append(("c-thought", "[THOUGHT]"))
             elif line.startswith("[") and line.endswith("]"):
                 thought_mode = False
-                terminal_lines.append(("term-muted", line))
+                terminal_lines.append(("c-muted", line))
             elif thought_mode:
-                terminal_lines.append(("term-thought", line))
+                if show_thought:
+                    terminal_lines.append(("c-thought", line))
             else:
-                terminal_lines.append(("term-error", line))
+                if not show_thought:
+                    # Strict gatekeeper rules over stderr leakage too
+                    if not any(tag in line for tag in ["[START]", "[STEP]", "[END]"]):
+                        continue
+                terminal_lines.append(("c-error", line))
         else:
+            if not show_thought:
+                if not any(tag in line for tag in ["[START]", "[STEP]", "[END]"]):
+                    continue # Strict Gatekeeper skipping log
+
             start_match = START_RE.match(line)
             step_match = STEP_RE.match(line)
             end_match = END_RE.match(line)
@@ -398,7 +439,7 @@ def run_agent(
                 task_preview = _code_from_task_name(active_task_name)
                 if "Waiting for mission start" not in task_preview:
                     code_view = task_preview
-                terminal_lines.append(("term-start", line))
+                terminal_lines.append(("c-start", line))
                 status_html = _metric_block(
                     "Mission Running",
                     f"task={active_task_name} | env={start_match.group('env')} | model={start_match.group('model')}",
@@ -409,7 +450,7 @@ def run_agent(
                 reward = float(step_match.group("reward"))
                 done_flag = step_match.group("done") == "true"
                 err = step_match.group("error")
-                css = "term-step" if err == "null" else "term-error"
+                css = "c-step" if err == "null" else "c-error"
                 terminal_lines.append((css, line))
                 status_html = _metric_block(
                     "Mission Running",
@@ -421,7 +462,7 @@ def run_agent(
                 score_value = float(end_match.group("score"))
                 rewards_raw = end_match.group("rewards").strip()
                 rewards_md = f"`Rewards:` {rewards_raw or 'none'}"
-                terminal_lines.append(("term-end", line))
+                terminal_lines.append(("c-end", line))
                 if success:
                     solved = _solution_from_task_name(active_task_name)
                     if solved:
@@ -436,16 +477,16 @@ def run_agent(
                         f"score={score_value:.2f} | steps={final_steps}",
                     )
             else:
-                terminal_lines.append(("term-muted", line))
+                terminal_lines.append(("c-muted", line))
 
         if len(terminal_lines) > 500:
             terminal_lines = terminal_lines[-500:]
 
-        yield code_view, _terminal_html(terminal_lines), status_html, score_value, rewards_md
+        yield code_view, _terminal_html(terminal_lines), status_html, score_value, rewards_md, gr.update(value="INFILTRATING...", interactive=False)
 
     return_code = process.wait(timeout=2)
     if return_code != 0:
-        terminal_lines.append(("term-error", f"Process exited with code {return_code}."))
+        terminal_lines.append(("c-error", f"Process exited with code {return_code}."))
         status_html = _metric_block(
             "Mission Error",
             f"inference.py exited non-zero (code={return_code})",
@@ -454,15 +495,16 @@ def run_agent(
     if len(terminal_lines) > 500:
         terminal_lines = terminal_lines[-500:]
 
-    yield code_view, _terminal_html(terminal_lines), status_html, score_value, rewards_md
+    yield code_view, _terminal_html(terminal_lines), status_html, score_value, rewards_md, gr.update(value="EXECUTE TRACEFIX", interactive=True)
 
 
-with gr.Blocks(title="TraceFix-RL Mission Control", css=CSS) as demo:
+with gr.Blocks(title="TraceFix-RL Mission Control") as demo:
     gr.HTML(
-        """
+        f"""
+        <style>{CSS}</style>
         <div id='header-wrap'>
-          <h1>TraceFix-RL: Autonomous Debugging Agent</h1>
-          <p>Mission Control UI for real-time agent orchestration on Hugging Face Spaces.</p>
+          <h1>TraceFix-RL /// PHANTOM PROTOCOL</h1>
+          <p>Real-time autonomous agent infiltration orchestration.</p>
         </div>
         """
     )
@@ -473,70 +515,104 @@ with gr.Blocks(title="TraceFix-RL Mission Control", css=CSS) as demo:
         sidebar_context = gr.Column()
 
     with sidebar_context:
-        gr.Markdown("### Runtime Inputs")
+        # Zone 1: The Config Sidebar
+        gr.Markdown("### CORE AUTHENTICATION")
         hf_token = gr.Textbox(label="HF Token", type="password", placeholder="hf_xxx")
-        task_choices = sorted(TASK_MAP.keys())
-        selected_task = os.getenv("TASK_NAME", "")
-        with gr.Row():
-            task_name = gr.Dropdown(
-                label="Task / Bug Selection",
-                choices=task_choices,
-                value=selected_task if selected_task else None,
-                allow_custom_value=True,
-                interactive=True,
-            )
-            load_code_button = gr.Button("Load Code")
-        model_name = gr.Textbox(label="Model Name", value=os.getenv("MODEL_NAME", "openai/gpt-oss-20b"))
-        api_base_url = gr.Textbox(label="API Base URL", value=os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"))
-        env_base_url = gr.Textbox(label="Env Base URL", value=os.getenv("ENV_BASE_URL", f"http://{BACKEND_HOST}:{BACKEND_PORT}"))
-        benchmark = gr.Textbox(label="Benchmark", value=os.getenv("BENCHMARK", "tracefix_rl"))
-        local_image_name = gr.Textbox(label="Local Image Name", value=os.getenv("LOCAL_IMAGE_NAME", ""), placeholder="optional")
-        max_steps = gr.Number(label="Max Steps", value=int(os.getenv("MAX_STEPS", "50")), precision=0)
-        success_score_threshold = gr.Number(
-            label="Success Score Threshold",
-            value=float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99")),
-            precision=2,
-        )
-        difficulty = gr.Dropdown(label="Difficulty", choices=["auto", "easy", "medium", "hard"], value="auto")
-        show_thought = gr.Checkbox(label="Stream Thought Trace", value=True)
-        run_button = gr.Button("Run Agent", variant="primary")
 
+        with gr.Accordion("Advanced Engine Parameters", open=False):
+            model_name = gr.Textbox(label="Model Name", value=os.getenv("MODEL_NAME", "openai/gpt-oss-20b"))
+            api_base_url = gr.Textbox(label="API Base URL", value=os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"))
+            env_base_url = gr.Textbox(label="Env Base URL", value=os.getenv("ENV_BASE_URL", f"http://{BACKEND_HOST}:{BACKEND_PORT}"))
+            benchmark = gr.Textbox(label="Benchmark", value=os.getenv("BENCHMARK", "tracefix_rl"))
+            local_image_name = gr.Textbox(label="Local Image Name", value=os.getenv("LOCAL_IMAGE_NAME", ""), placeholder="optional")
+            max_steps = gr.Number(label="Max Steps", value=int(os.getenv("MAX_STEPS", "50")), precision=0)
+            success_score_threshold = gr.Number(
+                label="Success Score Threshold",
+                value=float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99")),
+                precision=2,
+            )
+            difficulty = gr.Dropdown(label="Difficulty", choices=["auto", "easy", "medium", "hard"], value="auto")
+            show_thought = gr.Checkbox(label="Stream Thought Trace", value=True)
+
+    # Zone 2: The Mission Board
+    gr.HTML("<div class='panel-title' style='margin-top: 10px;'>MISSION BOARD /// TARGET SELECTION</div>")
+    with gr.Row(elem_classes=["panel"]):
+        easy_radio = gr.Radio(choices=EASY_CHOICES, label="Easy Targets", elem_id="easy-radio")
+        medium_radio = gr.Radio(choices=MEDIUM_CHOICES, label="Medium Targets", elem_id="medium-radio")
+        hard_radio = gr.Radio(choices=HARD_CHOICES, label="Hard Targets", elem_id="hard-radio")
+
+    # Zone 3: The HUD 
+    hud_badge = gr.HTML(_update_hud_badge("", ""))
+    run_button = gr.Button("EXECUTE TRACEFIX", elem_id="execute-btn", variant="primary")
+
+    # Radio change handlers for mutual exclusivity logic & HUD updates
+    def select_easy(val):
+        if not val:
+            return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        return None, None, _update_hud_badge(val, "Easy"), _code_from_task_name(val)
+
+    def select_medium(val):
+        if not val:
+            return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        return None, None, _update_hud_badge(val, "Medium"), _code_from_task_name(val)
+
+    def select_hard(val):
+        if not val:
+            return gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        return None, None, _update_hud_badge(val, "Hard"), _code_from_task_name(val)
+
+    # Zone 4: The Arena
     with gr.Row(equal_height=True):
         with gr.Column(scale=1, elem_classes=["panel", "code-panel"]):
-            gr.HTML("<div class='panel-title'>The Sandbox</div>")
+            gr.HTML("<div class='panel-title'>SANDBOX CODE</div>")
             code_view = gr.Code(
                 language="python",
                 interactive=False,
-                value=_code_from_task_name(selected_task),
+                value=_code_from_task_name(""),
                 lines=30,
             )
 
         with gr.Column(scale=1, elem_classes=["panel"]):
-            gr.HTML("<div class='panel-title'>The Terminal</div>")
+            gr.HTML("<div class='panel-title'>TERMINAL TRACE</div>")
             terminal = gr.HTML(_terminal_html([]))
 
     with gr.Row():
-        metric = gr.HTML(_metric_block("Idle", "Waiting for launch."))
+        metric = gr.HTML(_metric_block("Idle", "Awaiting target selection."))
         score = gr.Number(label="Final Score", value=0.0, precision=3)
         rewards = gr.Markdown("`Rewards:` pending")
 
-    load_code_button.click(load_code, inputs=[task_name, env_base_url], outputs=[code_view])
+    easy_radio.change(select_easy, inputs=[easy_radio], outputs=[medium_radio, hard_radio, hud_badge, code_view])
+    medium_radio.change(select_medium, inputs=[medium_radio], outputs=[easy_radio, hard_radio, hud_badge, code_view])
+    hard_radio.change(select_hard, inputs=[hard_radio], outputs=[easy_radio, medium_radio, hud_badge, code_view])
 
-    run_event = run_button.click(
+    # Run Sequence
+    # First disable button to show immediate feedback
+    run_immediate = run_button.click(
+        lambda: gr.update(value="INFILTRATING...", interactive=False),
+        inputs=[],
+        outputs=[run_button],
+        queue=False
+    )
+    
+    # Then reset state
+    run_event = run_immediate.then(
         _reset_run_state,
-        inputs=[task_name],
+        inputs=[easy_radio, medium_radio, hard_radio],
         outputs=[code_view, terminal, metric, score, rewards],
         queue=False,
     )
 
+    # Finally run generator (loads environment, streams stdout, then re-enables button upon END)
     run_event.then(
         run_agent,
         inputs=[
+            easy_radio,
+            medium_radio,
+            hard_radio,
             hf_token,
             api_base_url,
             model_name,
             env_base_url,
-            task_name,
             benchmark,
             max_steps,
             success_score_threshold,
@@ -544,5 +620,5 @@ with gr.Blocks(title="TraceFix-RL Mission Control", css=CSS) as demo:
             difficulty,
             show_thought,
         ],
-        outputs=[code_view, terminal, metric, score, rewards],
+        outputs=[code_view, terminal, metric, score, rewards, run_button],
     )
