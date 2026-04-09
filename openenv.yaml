@@ -4,3 +4,16 @@ type: space
 runtime: fastapi
 app: server.app:app
 port: 7860
+tasks:
+  - id: valid_parentheses_wrong_mapping
+    name: valid_parentheses_wrong_mapping
+    description: "Debug the is_valid function so it passes all tests."
+    grader: "server.graders:grade"
+  - id: binary_search_off_by_one
+    name: binary_search_off_by_one
+    description: "Debug the binary_search function so it passes all tests."
+    grader: "server.graders:grade"
+  - id: reverse_string_returns_original
+    name: reverse_string_returns_original
+    description: "Debug the reverse_string function so it passes all tests."
+    grader: "server.graders:grade"
