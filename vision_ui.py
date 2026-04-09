@@ -287,6 +287,16 @@ def _build_env(
 
 
 def sync_tasks(selected, grid_name):
+    if not selected:
+        return (
+            gr.skip(), 
+            gr.skip(), 
+            gr.skip(), 
+            gr.skip(), 
+            gr.skip(), 
+            gr.skip(),
+            gr.skip()
+        )
     if grid_name == "easy":
         easy_val = selected
         med_val = None

@@ -20,7 +20,7 @@ class TraceFixRLEnvironment(Environment):
         self._gym = TraceFixRLGym()
         self._state = State(episode_id="", step_count=0)
 
-    def reset(self, difficulty: str | None = None) -> CodeObservation:
+    def reset(self, difficulty: str | None = None, task_name: str | None = None) -> CodeObservation:
         if difficulty == "easy":
             self._gym.training_step = 1
         elif difficulty == "medium":
@@ -28,7 +28,18 @@ class TraceFixRLEnvironment(Environment):
         elif difficulty == "hard":
             self._gym.training_step = 6000
 
-        obs, system_prompt = self._gym.reset()
+        task_dict = None
+        if task_name and task_name != "tracefix_rl":
+            try:
+                from tasks.tasks import ALL_TASKS
+                for t in ALL_TASKS:
+                    if t.get("name") == task_name:
+                        task_dict = t
+                        break
+            except ImportError:
+                pass
+
+        obs, system_prompt = self._gym.reset(task_index=task_dict)
         self._state = State(
             episode_id=obs.info.get("episode_id", ""),
             step_count=obs.step_count,

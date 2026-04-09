@@ -325,11 +325,13 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
         else:
             env = TraceFixRLEnv(base_url=ENV_BASE_URL)
 
+        reset_kwargs = {}
         if difficulty:
-            reset_kwargs = {"difficulty": difficulty}
-            result = await env.reset(**reset_kwargs)
-        else:
-            result = await env.reset()
+            reset_kwargs["difficulty"] = difficulty
+        if TASK_NAME and TASK_NAME != "tracefix_rl":
+            reset_kwargs["task_name"] = TASK_NAME
+
+        result = await env.reset(**reset_kwargs)
         task_name = result.observation.info.get("task_name") or TASK_NAME
         log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
         started = True
