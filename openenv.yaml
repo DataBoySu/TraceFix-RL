@@ -2,5 +2,5 @@ spec_version: 1
 name: tracefix_rl
 type: space
 runtime: fastapi
-app: backend.app:app
+app: server.app:app
 port: 7860

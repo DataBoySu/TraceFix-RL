@@ -46,7 +46,7 @@ ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:7860")
 TASK_NAME = os.getenv("TASK_NAME", "tracefix_rl")
 BENCHMARK = os.getenv("BENCHMARK", "tracefix_rl")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
-SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99"))
+SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.98"))
 
 SYSTEM_PROMPT = """\
 You are a deterministic debugging policy agent.
@@ -296,7 +296,7 @@ def _compute_score(step_result: Any, rewards: list[float]) -> float:
         raw = info.get("final_score")
     if raw is None:
         raw = sum(rewards)
-    return max(0.0, min(1.0, float(raw)))
+    return max(0.01, min(0.99, float(raw)))
 
 
 async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> None:

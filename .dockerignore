@@ -30,3 +30,5 @@ outputs/
 CLAUDE.md
 package.json
 package-lock.json
+openenv_tracefix_rl.egg-info/
+test_redirect.py

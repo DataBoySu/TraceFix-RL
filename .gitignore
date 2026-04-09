@@ -13,3 +13,5 @@ package-lock.json
 **/__pycache__/
 **/.venv/
 **/node_modules/
+openenv_tracefix_rl.egg-info/
+test_redirect.py

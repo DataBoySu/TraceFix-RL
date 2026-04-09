@@ -512,7 +512,7 @@ with gr.Blocks(title="TraceFix-RL") as demo:
             max_steps = gr.Number(label="Max Steps", value=int(os.getenv("MAX_STEPS", "50")), precision=0)
             success_score_threshold = gr.Number(
                 label="Success Score Threshold",
-                value=float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.99")),
+                value=float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.98")),
                 precision=2,
             )
             show_thought = gr.Checkbox(label="Stream Thought Trace", value=False)

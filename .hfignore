@@ -33,3 +33,6 @@ build/
 outputs/
 *.log
 .github/
+
+openenv_tracefix_rl.egg-info/
+test_redirect.py
