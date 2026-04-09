@@ -31,7 +31,7 @@ HARD_CHOICES = [t.get("name") for t in TASKS_BY_DIFFICULTY.get("hard", []) if t.
 ROOT_DIR = Path(__file__).resolve().parent
 INFERENCE_PATH = ROOT_DIR / "inference.py"
 BACKEND_HOST = "127.0.0.1"
-BACKEND_PORT = 8000
+BACKEND_PORT = 7860
 GRADIO_HOST = "0.0.0.0"
 GRADIO_PORT = 7860
 
@@ -287,7 +287,6 @@ def _build_env(
 
 
 def sync_tasks(selected, grid_name):
-    # Depending on which grid was clicked, clear the others and fetch code
     if grid_name == "easy":
         easy_val = selected
         med_val = None
@@ -306,6 +305,7 @@ def sync_tasks(selected, grid_name):
         
     code_content = _code_from_task_name(selected)
     hud_content = _update_hud_badge(selected, diff)
+    title_content = "<div class='panel-title'>Target Source Code (Buggy)</div>"
     
     return (
         selected, 
@@ -313,27 +313,25 @@ def sync_tasks(selected, grid_name):
         gr.update(value=med_val), 
         gr.update(value=hard_val), 
         hud_content, 
+        title_content,
         code_content
     )
 
 def validate_and_start(token):
     if not token or not token.strip():
-        # Empty token: halt execution, render alert, push an error state early
         return (
             gr.update(elem_classes=["token-alert"]), 
             gr.update(value="ERROR: Token Required"), 
             False
         )
-    # Valid token
     return (
         gr.update(elem_classes=[]), 
         gr.update(value="RUNNING...", elem_id="execute-btn-running", interactive=False),
         True
     )
 
-def _reset_run_state(task_name):
+def _reset_run_state():
     return (
-        _code_from_task_name(task_name),
         _terminal_html([("c-muted", "Boot sequence initialized...")]),
         "<div style='text-align: center; color: var(--text-dim); padding: 20px;'>Running...</div>"
     )
@@ -348,19 +346,17 @@ def run_agent(
     success_score_threshold: float,
     show_thought: bool,
     proceed: bool
-) -> Generator[tuple[str, str, str, dict], None, None]:
+) -> Generator[tuple[Any, str, str, dict, Any], None, None]:
     
     if not proceed:
-        # User didn't pass auth check
-        yield (gr.skip(), gr.skip(), gr.skip(), gr.update(value="Run Debugging Agent", interactive=True))
+        yield (gr.skip(), gr.skip(), gr.skip(), gr.update(value="INITIATE TRACE RESOLUTION", interactive=True), gr.skip())
         return
 
-    code_view = _code_from_task_name(task_name)
     terminal_lines: list[tuple[str, str]] = []
     terminal_lines.append(("c-muted", "Agent initialized... infiltrating target."))
 
     result_html = "<div style='text-align: center; color: var(--text-dim); padding: 20px;'>Awaiting end...</div>"
-    yield code_view, _terminal_html(terminal_lines), result_html, gr.update()
+    yield gr.skip(), _terminal_html(terminal_lines), result_html, gr.update(), gr.skip()
 
     cmd = [sys.executable, str(INFERENCE_PATH)]
     if show_thought:
@@ -389,7 +385,9 @@ def run_agent(
 
     ended_streams: set[str] = set()
     thought_mode = False
-    active_task_name = task_name
+    
+    final_success = False
+    final_solved_code = None
 
     while True:
         try:
@@ -431,10 +429,6 @@ def run_agent(
             end_match = END_RE.match(line)
 
             if start_match:
-                active_task_name = start_match.group("task").strip()
-                task_preview = _code_from_task_name(active_task_name)
-                if "Waiting for selection" not in task_preview:
-                    code_view = task_preview
                 terminal_lines.append(("c-start", line))
             elif step_match:
                 err = step_match.group("error")
@@ -450,16 +444,17 @@ def run_agent(
                 result_html = _large_metric_html(success, score_value, final_steps, rewards_raw or 'none')
                 
                 if success:
-                    solved = _solution_from_task_name(active_task_name)
+                    final_success = True
+                    solved = _solution_from_task_name(task_name)
                     if solved:
-                        code_view = solved
+                        final_solved_code = solved
             else:
                 terminal_lines.append(("c-muted", line))
 
         if len(terminal_lines) > 500:
             terminal_lines = terminal_lines[-500:]
 
-        yield code_view, _terminal_html(terminal_lines), result_html, gr.update()
+        yield gr.skip(), _terminal_html(terminal_lines), result_html, gr.update(), gr.skip()
 
     return_code = process.wait(timeout=2)
     if return_code != 0:
@@ -469,7 +464,13 @@ def run_agent(
     if len(terminal_lines) > 500:
         terminal_lines = terminal_lines[-500:]
 
-    yield code_view, _terminal_html(terminal_lines), result_html, gr.update(value="Run Debugging Agent", elem_id="execute-btn", interactive=True)
+    code_update = gr.skip()
+    title_update = gr.skip()
+    if final_success and final_solved_code is not None:
+        code_update = final_solved_code
+        title_update = "<div class='panel-title'>Target Source Code (Resolved)</div>"
+
+    yield code_update, _terminal_html(terminal_lines), result_html, gr.update(value="INITIATE TRACE RESOLUTION", elem_id="execute-btn", interactive=True), title_update
 
 
 with gr.Blocks(title="TraceFix-RL") as demo:
@@ -497,7 +498,7 @@ with gr.Blocks(title="TraceFix-RL") as demo:
         with gr.Accordion("Engine Parameters", open=False):
             model_name = gr.Textbox(label="Model Name", value=os.getenv("MODEL_NAME", "openai/gpt-oss-20b"))
             api_base_url = gr.Textbox(label="API Base URL", value=os.getenv("API_BASE_URL", "https://router.huggingface.co/v1"))
-            env_base_url = gr.Textbox(label="Env Base URL", value=os.getenv("ENV_BASE_URL", f"http://{BACKEND_HOST}:{BACKEND_PORT}"))
+            env_base_url = gr.Textbox(label="Env Base URL", value=os.getenv("ENV_BASE_URL", f"http://127.0.0.1:{BACKEND_PORT}"))
             max_steps = gr.Number(label="Max Steps", value=int(os.getenv("MAX_STEPS", "50")), precision=0)
             success_score_threshold = gr.Number(
                 label="Success Score Threshold",
@@ -513,17 +514,11 @@ with gr.Blocks(title="TraceFix-RL") as demo:
         hard_radio = gr.Radio(choices=HARD_CHOICES, label="Hard Targets", elem_id="hard-radio")
 
     hud_badge = gr.HTML(_update_hud_badge("", ""))
-    run_button = gr.Button("Run Debugging Agent", elem_id="execute-btn", variant="primary")
-
-    # Sync tasks correctly
-    easy_radio.change(lambda x: sync_tasks(x, "easy"), inputs=[easy_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_view] if 'code_view' in locals() else None)
-    medium_radio.change(lambda x: sync_tasks(x, "medium"), inputs=[medium_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_view] if 'code_view' in locals() else None)
-    hard_radio.change(lambda x: sync_tasks(x, "hard"), inputs=[hard_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_view] if 'code_view' in locals() else None)
-
+    run_button = gr.Button("INITIATE TRACE RESOLUTION", elem_id="execute-btn", variant="primary")
 
     with gr.Row(equal_height=True):
         with gr.Column(scale=1, elem_classes=["panel", "code-panel"]):
-            gr.HTML("<div class='panel-title'>Sandbox Source Code</div>")
+            code_panel_title = gr.HTML("<div class='panel-title'>Target Source Code (Buggy)</div>")
             code_view = gr.Code(
                 language="python",
                 interactive=False,
@@ -539,10 +534,9 @@ with gr.Blocks(title="TraceFix-RL") as demo:
     with gr.Row(elem_classes=["panel"]):
         result_block = gr.HTML("<div style='text-align: center; color: var(--text-dim); padding: 20px;'>Awaiting Execution</div>")
 
-    # Due to 'code_view' not being defined above when change was defined, we must re-bind the change events to include code_view.
-    easy_radio.change(lambda x: sync_tasks(x, "easy"), inputs=[easy_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_view])
-    medium_radio.change(lambda x: sync_tasks(x, "medium"), inputs=[medium_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_view])
-    hard_radio.change(lambda x: sync_tasks(x, "hard"), inputs=[hard_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_view])
+    easy_radio.change(lambda x: sync_tasks(x, "easy"), inputs=[easy_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_panel_title, code_view])
+    medium_radio.change(lambda x: sync_tasks(x, "medium"), inputs=[medium_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_panel_title, code_view])
+    hard_radio.change(lambda x: sync_tasks(x, "hard"), inputs=[hard_radio], outputs=[selected_task_state, easy_radio, medium_radio, hard_radio, hud_badge, code_panel_title, code_view])
 
     # Run Sequence
     run_state = gr.State(value=True)
@@ -556,8 +550,8 @@ with gr.Blocks(title="TraceFix-RL") as demo:
     
     reset_step = validate_step.then(
         _reset_run_state,
-        inputs=[selected_task_state],
-        outputs=[code_view, terminal, result_block],
+        inputs=[],
+        outputs=[terminal, result_block],
         queue=False,
     )
 
@@ -574,5 +568,5 @@ with gr.Blocks(title="TraceFix-RL") as demo:
             show_thought,
             run_state
         ],
-        outputs=[code_view, terminal, result_block, run_button],
+        outputs=[code_view, terminal, result_block, run_button, code_panel_title],
     )
