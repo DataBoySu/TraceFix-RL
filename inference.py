@@ -42,7 +42,7 @@ MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-oss-20b")
 HF_TOKEN = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or "lm-studio"
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-ENV_BASE_URL = os.getenv("ENV_BASE_URL", "127.0.0.1:7860")
+ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://127.0.0.1:8000")
 TASK_NAME = os.getenv("TASK_NAME", "tracefix_rl")
 BENCHMARK = os.getenv("BENCHMARK", "tracefix_rl")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
