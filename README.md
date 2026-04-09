@@ -5,7 +5,6 @@ colorFrom: blue
 sdk: docker
 pinned: false
 app_port: 7860
-app_file: vision_ui.py
 base_path: /web
 tags:
   - openenv

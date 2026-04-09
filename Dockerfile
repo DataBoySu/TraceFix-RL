@@ -52,4 +52,4 @@ WORKDIR /app/env
 
 USER appuser
 
-CMD ["python", "vision_ui.py"]
+CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "7860"]

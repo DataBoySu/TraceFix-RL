@@ -1,5 +1,8 @@
 """FastAPI entry point for TraceFix-RL."""
 
+import gradio as gr
+from vision_ui import demo
+
 try:
     from openenv.core.env_server.http_server import create_app
 except Exception as e:  # pragma: no cover
@@ -26,6 +29,8 @@ app = create_app(
     env_name="tracefix_rl",
     max_concurrent_envs=1,
 )
+
+app = gr.mount_gradio_app(app, demo, path="/")
 
 
 def main() -> None:

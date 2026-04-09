@@ -5,14 +5,11 @@ import json
 import os
 import queue
 import re
-import socket
 import subprocess
 import sys
 import threading
-import time
 import urllib.error
 import urllib.request
-from contextlib import closing
 from pathlib import Path
 from typing import Any, Generator
 
@@ -295,34 +292,6 @@ def _build_env(
     return env
 
 
-def _is_port_open(host: str, port: int) -> bool:
-    with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as sock:
-        sock.settimeout(0.5)
-        return sock.connect_ex((host, port)) == 0
-
-
-def _start_backend_server() -> None:
-    if _is_port_open(BACKEND_HOST, BACKEND_PORT):
-        return
-
-    backend_env = os.environ.copy()
-    backend_env["HOST"] = BACKEND_HOST
-    backend_env["PORT"] = str(BACKEND_PORT)
-
-    subprocess.Popen(
-        ["python", "-m", "backend.app"],
-        cwd=str(ROOT_DIR),
-        env=backend_env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-
-    for _ in range(20):
-        if _is_port_open(BACKEND_HOST, BACKEND_PORT):
-            return
-        time.sleep(0.1)
-
-
 def _reset_run_state(task_name: str) -> tuple[str, str, str, float, str]:
     return (
         _code_from_task_name(task_name),
@@ -577,8 +546,3 @@ with gr.Blocks(title="TraceFix-RL Mission Control") as demo:
         ],
         outputs=[code_view, terminal, metric, score, rewards],
     )
-
-
-if __name__ == "__main__":
-    _start_backend_server()
-    demo.queue().launch(server_name=GRADIO_HOST, server_port=GRADIO_PORT, theme=gr.themes.Monochrome(), css=CSS)
