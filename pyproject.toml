@@ -38,10 +38,10 @@ dev = [
 
 [project.scripts]
 # Server entry point - enables running via: uv run --project . server
-# or: python -m tracefix_rl.server.app
-server = "tracefix_rl.server.app:main"
+# or: python -m tracefix_rl.backend.app
+server = "tracefix_rl.backend.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["tracefix_rl", "tracefix_rl.server"]
-package-dir = { "tracefix_rl" = ".", "tracefix_rl.server" = "server" }
+packages = ["tracefix_rl", "tracefix_rl.backend", "tracefix_rl.core", "tracefix_rl.tasks"]
+package-dir = { "tracefix_rl" = ".", "tracefix_rl.backend" = "backend", "tracefix_rl.core" = "core", "tracefix_rl.tasks" = "tasks" }

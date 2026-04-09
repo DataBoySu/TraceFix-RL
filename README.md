@@ -5,6 +5,7 @@ colorFrom: blue
 sdk: docker
 pinned: false
 app_port: 7860
+app_file: vision_ui.py
 base_path: /web
 tags:
   - openenv
@@ -54,7 +55,7 @@ Every task contains: `name`, `description`, `difficulty`, `bug_type`, `code` (bu
 
 This environment enforces strict typing and uses standard modern tooling:
 - **`uv`:** Handles dependency management (see `pyproject.toml`).
-- **FastAPI:** Provides the `server.app` integration layer for OpenEnv compliance.
+- **FastAPI:** Provides the `backend.app` integration layer for OpenEnv compliance.
 - **Pydantic (v2):** Provides strong validation layers for `models.py` (e.g., `CodeAction`, `CodeObservation`).
 - **OpenEnv Config:** See `openenv.yaml` which specifies `tracefix_rl` to run the FastAPI app on port `7860`.
 
@@ -63,7 +64,7 @@ This environment enforces strict typing and uses standard modern tooling:
 - `tasks.py`: Task metadata definitions.
 - `sandbox.py`: Subprocess runtime and output tracking.
 - `environment.py`: Reset/step/reward core RL loop logic (`TraceFixRLGym`).
-- `server/tracefix_rl_environment.py` / `server/app.py`: Maps the OpenAI/OpenEnv network interface to the core environment.
+- `backend/tracefix_rl_environment.py` / `backend/app.py`: Maps the OpenAI/OpenEnv network interface to the core environment.
 - `inference.py`: Baseline OpenAI-client inference script to evaluate agents.
 
 ## Local Development

@@ -9,7 +9,7 @@ from openenv.core.env_server.types import State
 try:
     from .models import CodeAction, CodeObservation, TestResult
 except ImportError:
-    from models import CodeAction, CodeObservation, TestResult
+    from core.models import CodeAction, CodeObservation, TestResult
 
 
 class TraceFixRLEnv(

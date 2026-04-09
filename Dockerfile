@@ -48,6 +48,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 
 EXPOSE 7860
 
+WORKDIR /app/env
+
 USER appuser
 
-CMD ["sh", "-c", "cd /app/env && python app.py"]
+CMD ["python", "vision_ui.py"]

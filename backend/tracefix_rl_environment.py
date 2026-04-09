@@ -4,11 +4,11 @@ from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
 try:
-    from ..environment import TraceFixRLGym
-    from ..models import CodeAction, CodeObservation
+    from core.environment import TraceFixRLGym
+    from core.models import CodeAction, CodeObservation
 except ImportError:
-    from environment import TraceFixRLGym
-    from models import CodeAction, CodeObservation
+    from core.environment import TraceFixRLGym
+    from core.models import CodeAction, CodeObservation
 
 
 class TraceFixRLEnvironment(Environment):

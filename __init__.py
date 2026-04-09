@@ -1,7 +1,7 @@
 """TraceFix-RL OpenEnv package."""
 
-from .client import MyEnv, TraceFixRLEnv
-from .models import CodeAction, CodeObservation, TestResult
+from .core.client import MyEnv, TraceFixRLEnv
+from .core.models import CodeAction, CodeObservation, TestResult
 
 __all__ = [
     "CodeAction",

@@ -11,12 +11,12 @@ try:
     from .context import extract_error_line, get_localized_context
     from .models import CodeAction, CodeObservation, TestResult
     from .sandbox import check_syntax, run_code_with_tests
-    from .tasks import ALL_TASKS, TASKS_BY_DIFFICULTY
+    from tasks.tasks import ALL_TASKS, TASKS_BY_DIFFICULTY
 except ImportError:
-    from context import extract_error_line, get_localized_context
-    from models import CodeAction, CodeObservation, TestResult
-    from sandbox import check_syntax, run_code_with_tests
-    from tasks import ALL_TASKS, TASKS_BY_DIFFICULTY
+    from core.context import extract_error_line, get_localized_context
+    from core.models import CodeAction, CodeObservation, TestResult
+    from core.sandbox import check_syntax, run_code_with_tests
+    from tasks.tasks import ALL_TASKS, TASKS_BY_DIFFICULTY
 
 
 R_SUBMIT_ALL_PASS = +1.00

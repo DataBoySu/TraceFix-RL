@@ -10,3 +10,6 @@ package.json
 package-lock.json
 .github/
 .agent/
+**/__pycache__/
+**/.venv/
+**/node_modules/

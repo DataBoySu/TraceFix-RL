@@ -19,8 +19,10 @@ from typing import Any, Generator
 import gradio as gr
 
 try:
-    from tasks import ALL_TASKS
+    from tasks import tasks
+    ALL_TASKS = tasks.ALL_TASKS
 except Exception:
+    tasks = None
     ALL_TASKS = []
 
 
@@ -308,7 +310,7 @@ def _start_backend_server() -> None:
     backend_env["PORT"] = str(BACKEND_PORT)
 
     subprocess.Popen(
-        [sys.executable, "-m", "server.app"],
+        ["python", "-m", "backend.app"],
         cwd=str(ROOT_DIR),
         env=backend_env,
         stdout=subprocess.DEVNULL,

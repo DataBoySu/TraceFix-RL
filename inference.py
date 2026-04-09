@@ -33,8 +33,8 @@ except Exception:
     ROOT_DIR = Path(__file__).resolve().parent
     if str(ROOT_DIR) not in sys.path:
         sys.path.insert(0, str(ROOT_DIR))
-    from client import TraceFixRLEnv
-    from models import CodeAction
+    from core.client import TraceFixRLEnv
+    from core.models import CodeAction
 
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")

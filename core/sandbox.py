@@ -42,7 +42,7 @@ from typing import Any, Callable, Dict, List, Set, Tuple
 try:
     from .models import TestResult
 except ImportError:
-    from models import TestResult
+    from core.models import TestResult
 
 
 

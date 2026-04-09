@@ -8,15 +8,15 @@ except Exception as e:  # pragma: no cover
     ) from e
 
 try:
-    from ..models import CodeAction, CodeObservation
-    from .tracefix_rl_environment import TraceFixRLEnvironment
+    from core.models import CodeAction, CodeObservation
+    from backend.tracefix_rl_environment import TraceFixRLEnvironment
 except ImportError:
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from models import CodeAction, CodeObservation
-    from server.tracefix_rl_environment import TraceFixRLEnvironment
+    from core.models import CodeAction, CodeObservation
+    from backend.tracefix_rl_environment import TraceFixRLEnvironment
 
 
 app = create_app(

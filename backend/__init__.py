@@ -1,4 +1,4 @@
-"""TraceFix-RL server components."""
+"""TraceFix-RL backend components."""
 
 from .tracefix_rl_environment import TraceFixRLEnvironment
 
