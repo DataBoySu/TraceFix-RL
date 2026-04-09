@@ -457,7 +457,7 @@ def run_agent(
     yield code_view, _terminal_html(terminal_lines), status_html, score_value, rewards_md
 
 
-with gr.Blocks(title="TraceFix-RL Mission Control") as demo:
+with gr.Blocks(title="TraceFix-RL Mission Control", css=CSS) as demo:
     gr.HTML(
         """
         <div id='header-wrap'>

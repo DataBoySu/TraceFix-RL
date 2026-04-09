@@ -36,6 +36,10 @@ from fastapi.responses import RedirectResponse
 async def root_redirect():
     return RedirectResponse(url="/web/")
 
+@app.get("/web", include_in_schema=False)
+async def web_no_slash_redirect():
+    return RedirectResponse(url="/web/")
+
 app = gr.mount_gradio_app(app, demo, path="/web")
 
 
