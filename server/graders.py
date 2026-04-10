@@ -1,8 +1,8 @@
 """Task graders for TraceFix-RL.
 
 The online validator expects importable grader callables for each task entry.
-These graders are intentionally flexible: they prefer an explicit final score,
-but they can also recover a score from common env payload shapes.
+These graders execute the real task tests against the final code state so the
+judge can verify actual solution quality instead of a canned lookup.
 """
 
 from __future__ import annotations
@@ -10,16 +10,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Optional
 
+from core.sandbox import run_code_with_tests
+from tasks.tasks import ALL_TASKS
+
 
 MIN_SCORE = 0.01
 MAX_SCORE = 0.98
-
-_TASK_BASELINES = {
-    "valid_parentheses_wrong_mapping": 0.18,
-    "binary_search_off_by_one": 0.24,
-    "reverse_string_returns_original": 0.12,
-}
-
 
 def _clamp(score: float) -> float:
     return round(min(max(score, MIN_SCORE), MAX_SCORE), 4)
@@ -74,46 +70,133 @@ def _find_score_value(payload: Any) -> Optional[float]:
     return None
 
 
-def _fallback_score(task_name: str, payload: Any) -> float:
-    baseline = _TASK_BASELINES.get(task_name, 0.15)
+def _find_task(task_name: str) -> Optional[dict[str, Any]]:
+    for task in ALL_TASKS:
+        if task.get("name") == task_name:
+            return task
+    return None
+
+
+def _extract_final_observation(payload: Any) -> Any:
+    if payload is None:
+        return None
 
     mapping = _as_mapping(payload)
-    action_history = None
     if mapping is not None:
-        action_history = mapping.get("action_history")
-    elif hasattr(payload, "action_history"):
-        action_history = getattr(payload, "action_history")
+        for key in ("final_observation", "observation", "state", "last_observation"):
+            if key in mapping:
+                candidate = mapping.get(key)
+                if candidate is not None:
+                    nested = _extract_final_observation(candidate)
+                    if nested is not None:
+                        return nested
+        if "trajectory" in mapping:
+            return _extract_final_observation(mapping.get("trajectory"))
+        return payload
 
-    if isinstance(action_history, Sequence) and not isinstance(action_history, (str, bytes, bytearray)):
-        action_count = sum(1 for _ in action_history)
-        baseline += min(0.20, action_count * 0.01)
-    elif isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
-        action_count = sum(1 for _ in payload)
-        baseline += min(0.20, action_count * 0.01)
+    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes, bytearray)):
+        if not payload:
+            return None
+        last_item = payload[-1]
+        if isinstance(last_item, Sequence) and not isinstance(last_item, (str, bytes, bytearray)) and len(last_item) >= 2:
+            return _extract_final_observation(last_item[1])
+        if isinstance(last_item, Mapping) or hasattr(last_item, "model_dump") or hasattr(last_item, "dict"):
+            return _extract_final_observation(last_item)
+        return last_item
 
-    return _clamp(baseline)
+    return payload
+
+
+def _observation_to_source(observation: Any) -> Optional[str]:
+    if observation is None:
+        return None
+
+    mapping = _as_mapping(observation)
+    if mapping is not None:
+        source = mapping.get("source")
+        if isinstance(source, str) and source.strip():
+            return source
+
+        code_lines = mapping.get("code_lines") or mapping.get("code")
+        if isinstance(code_lines, Sequence) and not isinstance(code_lines, (str, bytes, bytearray)):
+            lines = [str(line) for line in code_lines]
+            return "\n".join(lines)
+
+        code_dict = mapping.get("code_dict")
+        if isinstance(code_dict, Mapping) and code_dict:
+            ordered_lines: list[tuple[int, str]] = []
+            for key, value in code_dict.items():
+                try:
+                    line_no = int(key)
+                except Exception:
+                    continue
+                ordered_lines.append((line_no, str(value)))
+            if ordered_lines:
+                ordered_lines.sort(key=lambda item: item[0])
+                return "\n".join(line for _, line in ordered_lines)
+
+    for attr in ("source", "code", "code_lines", "code_dict"):
+        if hasattr(observation, attr):
+            value = getattr(observation, attr)
+            if isinstance(value, str) and value.strip():
+                return value
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+                return "\n".join(str(line) for line in value)
+            if isinstance(value, Mapping) and value:
+                ordered_lines = []
+                for key, line in value.items():
+                    try:
+                        ordered_lines.append((int(key), str(line)))
+                    except Exception:
+                        continue
+                if ordered_lines:
+                    ordered_lines.sort(key=lambda item: item[0])
+                    return "\n".join(line for _, line in ordered_lines)
+
+    return None
+
+
+def _evaluate_task(task_name: str, payload: Any) -> float:
+    task = _find_task(task_name)
+    if task is None:
+        return MIN_SCORE
+
+    final_observation = _extract_final_observation(payload)
+    source = _observation_to_source(final_observation)
+    if not source or not source.strip():
+        return MIN_SCORE
+
+    try:
+        _, results, syntax_err = run_code_with_tests(
+            source=source,
+            test_callables=task["tests"],
+        )
+    except Exception:
+        return MIN_SCORE
+
+    if syntax_err:
+        return MIN_SCORE
+
+    if results and all(test_result.passed for test_result in results):
+        return MAX_SCORE
+
+    return MIN_SCORE
 
 
 def grade(payload: Any = None, *args: Any, task_name: str = "", **kwargs: Any) -> float:
-    """Return a normalized score in the project's intended range."""
+    """Execute the task's real tests against the final code state."""
 
     if payload is None and args:
         payload = args[0]
-
-    for candidate in (payload, kwargs):
-        if candidate is None:
-            continue
-        score = _find_score_value(candidate)
-        if score is not None:
-            return _clamp(score)
 
     if not task_name:
         task_name = str(kwargs.get("task_id") or kwargs.get("name") or "")
 
     if task_name:
-        return _fallback_score(task_name, payload or kwargs)
+        active_payload = payload if payload is not None else kwargs
+        return _evaluate_task(task_name, active_payload)
 
-    return _clamp(0.15)
+    return MIN_SCORE
 
 
 def grade_valid_parentheses_wrong_mapping(*args: Any, **kwargs: Any) -> float:

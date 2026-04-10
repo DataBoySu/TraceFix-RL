@@ -53,12 +53,14 @@ Every task contains: `name`, `description`, `difficulty`, `bug_type`, `code` (bu
 ## Tech Stack & Project Files
 
 This environment enforces strict typing and uses standard modern tooling:
+
 - **`uv`:** Handles dependency management (see `pyproject.toml`).
 - **FastAPI:** Provides the `server.app` integration layer for OpenEnv compliance.
 - **Pydantic (v2):** Provides strong validation layers for `models.py` (e.g., `CodeAction`, `CodeObservation`).
 - **OpenEnv Config:** See `openenv.yaml` which specifies `tracefix_rl` to run the FastAPI app on port `7860`.
 
 **File Layout:**
+
 - `models.py` / `context.py`: Domain and schema logic.
 - `tasks.py`: Task metadata definitions.
 - `sandbox.py`: Subprocess runtime and output tracking.
@@ -79,6 +81,7 @@ uv run --project . server
 ```
 
 Server endpoints available:
+
 - `POST /reset`
 - `POST /step`
 - `GET /health`
@@ -91,7 +94,7 @@ The current environment intentionally squashes scores into the open interval `[0
 reported with that convention in mind.
 
 | Task | Baseline Score |
-|------|----------------|
+| --- | --- |
 | `valid_parentheses_wrong_mapping` | Pending first benchmark run |
 | `binary_search_off_by_one` | Pending first benchmark run |
 | `reverse_string_returns_original` | Pending first benchmark run |
@@ -101,12 +104,14 @@ reported with that convention in mind.
 The space runs via Docker. The container is securely configured to run as a non-root `appuser` (UID base `1000`) for Spaces compliance.
 
 ### Testing Locally in Docker
+
 ```bash
 docker build -t tracefix-rl:test -f Dockerfile .
 docker run --rm -p 7860:7860 tracefix-rl:test
 ```
 
 ### Deploy to Hugging Face Spaces
+
 This project uses the OpenEnv CLI for seamless Hugging Face Space deployments.
 
 ```bash
@@ -115,7 +120,9 @@ openenv push
 ```
 
 ### Server Pre-validation
+
 Before committing to training, you can validate your deployed server or local space:
+
 ```bash
 bash ./pre-val.sh https://<your-space>.hf.space .
 ```
@@ -125,15 +132,18 @@ bash ./pre-val.sh https://<your-space>.hf.space .
 The baseline inference runner evaluates agents against the environment using an OpenAI-compatible interface.
 
 **Requirements for Inference:**
+
 - `API_BASE_URL` (Defaults to `https://router.huggingface.co/v1`)
 - `MODEL_NAME` (Defaults to `Qwen/Qwen2.5-72B-Instruct`)
 - `HF_TOKEN`
 
 **Usage Flags:**
+
 - `--easy`, `--medium`, `--hard`: Lock the environment to a specific task bucket.
 - `--thought`: Send `<thought>` token blocks back to the payload to train chain-of-thought capabilities.
 
 Example execution tracking thoughts in medium tasks:
+
 ```bash
 python inference.py --medium --thought
 ```
