@@ -8,12 +8,12 @@ tasks:
   - id: valid_parentheses_wrong_mapping
     name: valid_parentheses_wrong_mapping
     description: "Debug the is_valid function so it passes all tests."
-    grader: "server.graders:grade_valid_parentheses_wrong_mapping"
+    grader: "task1_easy:grade"
   - id: binary_search_off_by_one
     name: binary_search_off_by_one
     description: "Debug the binary_search function so it passes all tests."
-    grader: "server.graders:grade_binary_search_off_by_one"
+    grader: "task2_medium:grade"
   - id: reverse_string_returns_original
     name: reverse_string_returns_original
     description: "Debug the reverse_string function so it passes all tests."
-    grader: "server.graders:grade_reverse_string_returns_original"
+    grader: "task3_hard:grade"
