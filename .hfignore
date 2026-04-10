@@ -13,6 +13,7 @@ node_modules/
 # Local secrets/config
 .env
 .env.*
+CLAUDE.md
 
 # VCS and editor noise
 .git/

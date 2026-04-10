@@ -10,6 +10,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .mypy_cache/
+CLAUDE.md
 *.egg-info/
 
 # Node / tooling

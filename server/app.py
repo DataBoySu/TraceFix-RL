@@ -27,7 +27,7 @@ app = create_app(
     CodeAction,
     CodeObservation,
     env_name="tracefix_rl",
-    max_concurrent_envs=1,
+    max_concurrent_envs=100,
 )
 
 from fastapi.responses import RedirectResponse

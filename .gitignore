@@ -2,7 +2,7 @@
 .agents/
 .env
 uv.lock
-claude.md
+CLAUDE.md
 __pycache__/
 _pycache_/
 node_modules/
@@ -15,3 +15,4 @@ package-lock.json
 **/node_modules/
 openenv_tracefix_rl.egg-info/
 test_redirect.py
+RULES.md
