@@ -5,33 +5,18 @@ runtime: fastapi
 app: server.app:app
 port: 7860
 tasks:
-  task1_easy:
-    id: valid_parentheses_wrong_mapping
+  - id: task1_easy
     name: valid_parentheses_wrong_mapping
-    file: task1_easy.py
-    enabled: true
+    description: "Debug the is_valid function so it passes all tests."
     difficulty: easy
-    objective: "Debug the is_valid function so it passes all tests."
-    grader:
-      enabled: true
-      entrypoint: task1_easy:grade
-  task2_medium:
-    id: binary_search_off_by_one
+    grader: task1_easy:grade
+  - id: task2_medium
     name: binary_search_off_by_one
-    file: task2_medium.py
-    enabled: true
+    description: "Debug the binary_search function so it passes all tests."
     difficulty: medium
-    objective: "Debug the binary_search function so it passes all tests."
-    grader:
-      enabled: true
-      entrypoint: task2_medium:grade
-  task3_hard:
-    id: reverse_string_returns_original
+    grader: task2_medium:grade
+  - id: task3_hard
     name: reverse_string_returns_original
-    file: task3_hard.py
-    enabled: true
+    description: "Debug the reverse_string function so it passes all tests."
     difficulty: hard
-    objective: "Debug the reverse_string function so it passes all tests."
-    grader:
-      enabled: true
-      entrypoint: task3_hard:grade
+    grader: task3_hard:grade
