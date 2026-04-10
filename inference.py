@@ -296,7 +296,7 @@ def _compute_score(step_result: Any, rewards: list[float]) -> float:
         raw = info.get("final_score")
     if raw is None:
         raw = sum(rewards)
-    return max(0.01, min(0.99, float(raw)))
+    return max(0.01, min(0.98, float(raw)))
 
 
 async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> None:

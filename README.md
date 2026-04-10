@@ -12,7 +12,7 @@ tags:
   - software-engineering
 ---
 
-# TraceFix-RL
+## TraceFix-RL
 
 TraceFix-RL is an OpenEnv-compatible environment designed to teach agent behavior
 that looks like real software engineering work. Instead of one-shot answers,
@@ -24,7 +24,7 @@ and penalizes random edits, forcing the model to learn an engineering workflow.
 
 - **Action space:** `VIEW_CODE`, `RUN_TESTS`, `REPLACE_LINES`, `UNDO_EDIT`, `RESET_TO_ORIGINAL`, `SUBMIT`
 - **Observations:** The full code snapshot, localized edit context, execution output, syntax status, and per-test outcomes.
-- **Dense Rewards:** `RUN_TESTS` bonus, per-test progress bonus, step-cost penalty, invalid-edit penalties, and a final clamped score bounded within `[0, 1]`.
+- **Dense Rewards:** `RUN_TESTS` bonus, per-test progress bonus, step-cost penalty, invalid-edit penalties, and a final clamped score bounded within `[0.01, 0.98]`.
 - **Curriculum-ready Tasks:** Includes Easy, Medium, and Hard buckets that the OpenEnv trainer can sequence, alongside random fallback for evaluators.
 
 ## State Machine Training Pattern
@@ -83,6 +83,18 @@ Server endpoints available:
 - `POST /step`
 - `GET /health`
 - `WS /ws`
+
+## Baseline Scores
+
+Baseline scores are intended to be recorded from the bundled `inference.py` runner against the three validator tasks.
+The current environment intentionally squashes scores into the open interval `[0.01, 0.98]`, so benchmark output should be
+reported with that convention in mind.
+
+| Task | Baseline Score |
+|------|----------------|
+| `valid_parentheses_wrong_mapping` | Pending first benchmark run |
+| `binary_search_off_by_one` | Pending first benchmark run |
+| `reverse_string_returns_original` | Pending first benchmark run |
 
 ## Docker + Hugging Face Spaces Deployment
 

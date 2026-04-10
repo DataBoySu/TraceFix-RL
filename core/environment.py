@@ -298,7 +298,7 @@ class TraceFixRLGym:
             total  = len(results)
             passes = 0 if syntax_err else sum(1 for t in results if t.passed)
             raw    = (passes / total if total > 0 else 0.0) - self._accumulated_step_costs
-            reward = max(0.01, min(0.99, raw))
+            reward = max(0.01, min(0.98, raw))
             self._last_output += (
                 f"\n⚠ Max steps ({MAX_STEPS}) reached. "
                 f"Auto-evaluated: {passes}/{total} tests passing. "
@@ -314,7 +314,7 @@ class TraceFixRLGym:
             "step":              self._step_count,
         }
         if self._done:
-            info["final_score"] = max(0.01, min(0.99, round(reward, 4)))
+            info["final_score"] = max(0.01, min(0.98, round(reward, 4)))
 
         return obs, round(reward, 4), self._done, info
 
@@ -467,7 +467,7 @@ class TraceFixRLGym:
 
         proportion  = passes / total if total > 0 else 0.0
         raw_score   = proportion - self._accumulated_step_costs
-        final_score = max(0.01, min(0.99, raw_score))
+        final_score = max(0.01, min(0.98, raw_score))
 
         if not syntax_err:
             if passes == total:
