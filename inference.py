@@ -48,6 +48,16 @@ BENCHMARK = os.getenv("BENCHMARK", "tracefix_rl")
 MAX_STEPS = int(os.getenv("MAX_STEPS", "50"))
 SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.98"))
 
+# Must match openenv.yaml task ids exactly.
+TASKS = ["task1_easy", "task2_medium", "task3_hard"]
+
+# The server reset API currently resolves tasks by internal task `name`.
+TASK_ID_TO_RESET_NAME = {
+    "task1_easy": "valid_parentheses_wrong_mapping",
+    "task2_medium": "binary_search_off_by_one",
+    "task3_hard": "reverse_string_returns_original",
+}
+
 SYSTEM_PROMPT = """\
 You are a deterministic debugging policy agent.
 You must output exactly one valid CodeAction JSON object per turn and nothing else.
@@ -306,18 +316,6 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
     )
 
     env: Optional[TraceFixRLEnv] = None
-    rewards: list[float] = []
-    history: list[str] = []
-    history_messages: list[dict[str, str]] = []
-    action_trajectory: list[str] = []
-    steps_taken = 0
-    score = 0.0
-    success = False
-    started = False
-    kill_switch_triggered = False
-    last_action_type: Optional[str] = None
-    consecutive_same_action_count = 0
-    consecutive_parse_error_count = 0
 
     try:
         if LOCAL_IMAGE_NAME:
@@ -325,179 +323,197 @@ async def run(difficulty: Optional[str] = None, show_thought: bool = False) -> N
         else:
             env = TraceFixRLEnv(base_url=ENV_BASE_URL)
 
-        reset_kwargs = {}
-        if difficulty:
-            reset_kwargs["difficulty"] = difficulty
-        if TASK_NAME and TASK_NAME != "tracefix_rl":
-            reset_kwargs["task_name"] = TASK_NAME
+        for task_id in TASKS:
+            rewards: list[float] = []
+            history: list[str] = []
+            history_messages: list[dict[str, str]] = []
+            action_trajectory: list[str] = []
+            steps_taken = 0
+            score = 0.0
+            success = False
+            kill_switch_triggered = False
+            last_action_type: Optional[str] = None
+            consecutive_same_action_count = 0
+            consecutive_parse_error_count = 0
+            task_started = False
 
-        result = await env.reset(**reset_kwargs)
-        task_name = result.observation.info.get("task_name") or TASK_NAME
-        log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
-        started = True
+            try:
+                reset_kwargs: dict[str, Any] = {}
+                if difficulty:
+                    reset_kwargs["difficulty"] = difficulty
+                reset_kwargs["task_name"] = TASK_ID_TO_RESET_NAME.get(task_id, task_id)
 
-        for step in range(1, MAX_STEPS + 1):
-            if result.done:
-                break
+                result = await env.reset(**reset_kwargs)
+                log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+                task_started = True
 
-            action: Optional[CodeAction] = None
-            parse_error_note: Optional[str] = None
-            if step == 1:
-                action = CodeAction(
-                    action_type="VIEW_CODE",
-                    thought="First step policy: inspect source before testing or editing.",
-                )
-                if show_thought:
-                    print("[THOUGHT]", file=sys.stderr, flush=True)
-                    print(action.thought, file=sys.stderr, flush=True)
-            else:
-                obs_text = _build_observation_text(result.observation)
-                obs_last_output = str(getattr(result.observation, "last_execution_output", "") or "")
-                pass_count_text, all_tests_pass_signal = _extract_pass_signal_fields(obs_last_output)
-                last_action = action_trajectory[-1] if action_trajectory else "none"
-                dynamic_override = ""
-                if action_trajectory and action_trajectory[-1] == "REPLACE_LINES":
-                    dynamic_override = (
-                        "\n[SYSTEM OVERRIDE]: Your last action was REPLACE_LINES. "
-                        "You are STRICTLY FORBIDDEN from editing the code again. "
-                        "Your action_type MUST be RUN_TESTS to verify the changes.\n"
-                    )
-                elif action_trajectory and action_trajectory[-1] == "VIEW_CODE":
-                    dynamic_override = (
-                        "\n[SYSTEM OVERRIDE]: Your last action was VIEW_CODE. "
-                        "You MUST choose RUN_TESTS next to get test evidence.\n"
-                    )
-                if show_thought:
-                    output_preview = "\\n".join(obs_last_output.splitlines()[:6])
-                    print("[OBS_DEBUG]", file=sys.stderr, flush=True)
-                    print(
-                        f"chars={len(obs_last_output)} pass_count={pass_count_text} all_pass={str(all_tests_pass_signal).lower()} last_action={last_action}",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                    print(output_preview if output_preview else "<empty last_execution_output>", file=sys.stderr, flush=True)
-                history_messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Pick the single best next action and return only one valid CodeAction JSON object. "
-                            "Use localized_context/last_execution_output as evidence, and do not SUBMIT unless all tests explicitly pass. "
-                            "If all_tests_pass_signal=true, you must choose SUBMIT now and must not choose RUN_TESTS again. "
-                            "Do not wait for additional test output when all_tests_pass_signal=true. "
-                            "If last_action was RUN_TESTS and all_tests_pass_signal=false, choose REPLACE_LINES or VIEW_CODE next, not RUN_TESTS again.\n\n"
-                            f"action_trajectory={(' -> '.join(action_trajectory) if action_trajectory else 'none')}\n"
-                            f"{dynamic_override}\n"
-                            f"decision_guard: last_action={last_action}, pass_count_summary={pass_count_text}, all_tests_pass_signal={str(all_tests_pass_signal).lower()}\n\n"
-                            f"{obs_text}"
-                        ),
-                    }
-                )
-                try:
-                    action, assistant_json = _get_model_action(client, history_messages)
-                    consecutive_parse_error_count = 0
-                    history_messages.append({"role": "assistant", "content": assistant_json})
-                    if show_thought:
-                        _print_thought(action, assistant_json)
-                except ModelParseError as exc:
-                    cause = str(exc).replace("\n", " ")
-                    parse_error_note = cause
-                    consecutive_parse_error_count += 1
-                    raw_response = (exc.raw_response or "").strip()
-                    if raw_response:
-                        history_messages.append({"role": "assistant", "content": raw_response})
-                    history_messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                f"PARSE_ERROR: {cause}. "
-                                "Return one valid CodeAction object only. "
-                                "Include thought and ensure strict field types."
-                            ),
-                        }
-                    )
-                    history.append(f"PARSE_ERROR: {cause}")
-                    if consecutive_parse_error_count >= 3:
+                for step in range(1, MAX_STEPS + 1):
+                    if result.done:
+                        break
+
+                    action: Optional[CodeAction] = None
+                    parse_error_note: Optional[str] = None
+                    if step == 1:
+                        action = CodeAction(
+                            action_type="VIEW_CODE",
+                            thought="First step policy: inspect source before testing or editing.",
+                        )
+                        if show_thought:
+                            print("[THOUGHT]", file=sys.stderr, flush=True)
+                            print(action.thought, file=sys.stderr, flush=True)
+                    else:
+                        obs_text = _build_observation_text(result.observation)
+                        obs_last_output = str(getattr(result.observation, "last_execution_output", "") or "")
+                        pass_count_text, all_tests_pass_signal = _extract_pass_signal_fields(obs_last_output)
+                        last_action = action_trajectory[-1] if action_trajectory else "none"
+                        dynamic_override = ""
+                        if action_trajectory and action_trajectory[-1] == "REPLACE_LINES":
+                            dynamic_override = (
+                                "\n[SYSTEM OVERRIDE]: Your last action was REPLACE_LINES. "
+                                "You are STRICTLY FORBIDDEN from editing the code again. "
+                                "Your action_type MUST be RUN_TESTS to verify the changes.\n"
+                            )
+                        elif action_trajectory and action_trajectory[-1] == "VIEW_CODE":
+                            dynamic_override = (
+                                "\n[SYSTEM OVERRIDE]: Your last action was VIEW_CODE. "
+                                "You MUST choose RUN_TESTS next to get test evidence.\n"
+                            )
+                        if show_thought:
+                            output_preview = "\\n".join(obs_last_output.splitlines()[:6])
+                            print("[OBS_DEBUG]", file=sys.stderr, flush=True)
+                            print(
+                                f"chars={len(obs_last_output)} pass_count={pass_count_text} all_pass={str(all_tests_pass_signal).lower()} last_action={last_action}",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            print(output_preview if output_preview else "<empty last_execution_output>", file=sys.stderr, flush=True)
+                        history_messages.append(
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Pick the single best next action and return only one valid CodeAction JSON object. "
+                                    "Use localized_context/last_execution_output as evidence, and do not SUBMIT unless all tests explicitly pass. "
+                                    "If all_tests_pass_signal=true, you must choose SUBMIT now and must not choose RUN_TESTS again. "
+                                    "Do not wait for additional test output when all_tests_pass_signal=true. "
+                                    "If last_action was RUN_TESTS and all_tests_pass_signal=false, choose REPLACE_LINES or VIEW_CODE next, not RUN_TESTS again.\n\n"
+                                    f"action_trajectory={(' -> '.join(action_trajectory) if action_trajectory else 'none')}\n"
+                                    f"{dynamic_override}\n"
+                                    f"decision_guard: last_action={last_action}, pass_count_summary={pass_count_text}, all_tests_pass_signal={str(all_tests_pass_signal).lower()}\n\n"
+                                    f"{obs_text}"
+                                ),
+                            }
+                        )
+                        try:
+                            action, assistant_json = _get_model_action(client, history_messages)
+                            consecutive_parse_error_count = 0
+                            history_messages.append({"role": "assistant", "content": assistant_json})
+                            if show_thought:
+                                _print_thought(action, assistant_json)
+                        except ModelParseError as exc:
+                            cause = str(exc).replace("\n", " ")
+                            parse_error_note = cause
+                            consecutive_parse_error_count += 1
+                            raw_response = (exc.raw_response or "").strip()
+                            if raw_response:
+                                history_messages.append({"role": "assistant", "content": raw_response})
+                            history_messages.append(
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        f"PARSE_ERROR: {cause}. "
+                                        "Return one valid CodeAction object only. "
+                                        "Include thought and ensure strict field types."
+                                    ),
+                                }
+                            )
+                            history.append(f"PARSE_ERROR: {cause}")
+                            if consecutive_parse_error_count >= 3:
+                                kill_switch_triggered = True
+                                history.append(
+                                    "KILL_SWITCH: PARSE_ERROR occurred 3 times consecutively. "
+                                    "Terminating episode early to prevent token burn."
+                                )
+                                steps_taken = step
+                                success = False
+                                score = 0.0
+                                break
+                            action = CodeAction(
+                                action_type="RUN_TESTS",
+                                thought=(
+                                    "PARSE_ERROR recovery step: run tests so the step is explicit and "
+                                    "collect fresh traceback context for the next valid action."
+                                ),
+                            )
+
+                    if kill_switch_triggered:
+                        break
+
+                    current_action_type = action.action_type
+                    if current_action_type == last_action_type:
+                        consecutive_same_action_count += 1
+                    else:
+                        consecutive_same_action_count = 1
+                        last_action_type = current_action_type
+
+                    if consecutive_same_action_count >= 3:
                         kill_switch_triggered = True
                         history.append(
-                            "KILL_SWITCH: PARSE_ERROR occurred 3 times consecutively. "
-                            "Terminating episode early to prevent token burn."
+                            f"KILL_SWITCH: {current_action_type} selected 3 times consecutively. "
+                            "Terminating episode early to prevent looping."
                         )
                         steps_taken = step
                         success = False
                         score = 0.0
                         break
-                    action = CodeAction(
-                        action_type="RUN_TESTS",
-                        thought=(
-                            "PARSE_ERROR recovery step: run tests so the step is explicit and "
-                            "collect fresh traceback context for the next valid action."
-                        ),
+
+                    result = await env.step(action)
+
+                    reward = float(result.reward or 0.0)
+                    done = bool(result.done)
+                    action_str = action.action_type
+
+                    obs_meta = result.observation.metadata or {}
+                    error = obs_meta.get("last_action_error")
+                    if error is not None:
+                        error = str(error).replace("\n", " ")
+                    if parse_error_note:
+                        error = f"PARSE_ERROR: {parse_error_note}"
+
+                    rewards.append(reward)
+                    steps_taken = step
+                    action_thought = (action.thought or "").strip()
+                    history.append(
+                        f"Action {action_str}; reward {reward:.2f}; error {error or 'null'}."
+                        + (f" Thought: {action_thought}" if action_thought else "")
                     )
+                    action_trajectory.append(action_str)
+                    log_step(step=step, action=action_str, reward=reward, done=done, error=error)
 
-            if kill_switch_triggered:
-                break
+                    if done:
+                        break
 
-            current_action_type = action.action_type
-            if current_action_type == last_action_type:
-                consecutive_same_action_count += 1
-            else:
-                consecutive_same_action_count = 1
-                last_action_type = current_action_type
+                if not kill_switch_triggered:
+                    score = _compute_score(result, rewards)
+                    success = score >= SUCCESS_SCORE_THRESHOLD
 
-            if consecutive_same_action_count >= 3:
-                kill_switch_triggered = True
-                history.append(
-                    f"KILL_SWITCH: {current_action_type} selected 3 times consecutively. "
-                    "Terminating episode early to prevent looping."
-                )
-                steps_taken = step
-                success = False
+            except Exception:
+                if not task_started:
+                    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+                    task_started = True
                 score = 0.0
-                break
+                success = False
+            finally:
+                log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
-            result = await env.step(action)
-
-            reward = float(result.reward or 0.0)
-            done = bool(result.done)
-            action_str = action.action_type
-
-            obs_meta = result.observation.metadata or {}
-            error = obs_meta.get("last_action_error")
-            if error is not None:
-                error = str(error).replace("\n", " ")
-            if parse_error_note:
-                error = f"PARSE_ERROR: {parse_error_note}"
-
-            rewards.append(reward)
-            steps_taken = step
-            action_thought = (action.thought or "").strip()
-            history.append(
-                f"Action {action_str}; reward {reward:.2f}; error {error or 'null'}."
-                + (f" Thought: {action_thought}" if action_thought else "")
-            )
-            action_trajectory.append(action_str)
-            log_step(step=step, action=action_str, reward=reward, done=done, error=error)
-
-            if done:
-                break
-
-        if not kill_switch_triggered:
-            score = _compute_score(result, rewards)
-            success = score >= SUCCESS_SCORE_THRESHOLD
-
-    except Exception as exc:
-        if not started:
-            log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
-            started = True
-        score = 0.0
-        success = False
+    except Exception:
+        # Preserve existing behavior: unexpected top-level failures should not crash silently.
+        raise
     finally:
         if env is not None:
             try:
                 await env.close()
             except Exception:
                 pass
-        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":
